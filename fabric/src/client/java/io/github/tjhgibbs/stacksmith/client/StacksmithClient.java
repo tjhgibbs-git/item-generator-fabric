@@ -12,7 +12,7 @@ import net.minecraft.resources.Identifier;
 public final class StacksmithClient implements ClientModInitializer {
     static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(StacksmithMod.MOD_ID, "main"));
     static KeyMapping openKey;
-    /** Which editor the key reopens. */
+    /** Which editor the key reopens; set by the editors as they open. */
     static boolean spawnerLast;
 
     @Override
@@ -23,11 +23,6 @@ public final class StacksmithClient implements ClientModInitializer {
             // the editor over another screen.
             while (openKey.consumeClick()) {
                 mc.setScreenAndShow(spawnerLast ? new SpawnerEditorScreen(null) : new ItemEditorScreen(null));
-            }
-            if (mc.screen instanceof SpawnerEditorScreen) {
-                spawnerLast = true;
-            } else if (mc.screen instanceof ItemEditorScreen) {
-                spawnerLast = false;
             }
         });
     }

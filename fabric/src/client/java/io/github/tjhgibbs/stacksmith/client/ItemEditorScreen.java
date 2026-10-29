@@ -128,6 +128,9 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
     @Override
     protected void init() {
         SuggestBox.closeAll();
+        if (onDone == null) {
+            StacksmithClient.spawnerLast = false;
+        }
         if (itemIds == null) {
             itemIds = new ArrayList<>();
             BuiltInRegistries.ITEM.keySet().forEach(k -> itemIds.add(k.toString()));
@@ -340,6 +343,13 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
                 onDone.accept(spec.copy());
                 onClose();
             }).bounds(width - PAD - 62, by, 62, 20).build());
+        }
+    }
+
+    private void giveItem() {
+        if (problem == null && !stack.isEmpty()) {
+            Component msg = Delivery.giveCreative(stack);
+            toast(msg, Delivery.isCreative());
         }
     }
 

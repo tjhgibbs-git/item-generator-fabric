@@ -119,6 +119,7 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     @Override
     protected void init() {
         SuggestBox.closeAll();
+        StacksmithClient.spawnerLast = true;
         if (entityIds == null) {
             entityIds = McEntities.summonableIds();
         }
