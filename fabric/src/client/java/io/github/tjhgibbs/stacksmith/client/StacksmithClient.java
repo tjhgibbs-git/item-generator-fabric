@@ -8,12 +8,10 @@ import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.resources.Identifier;
 
-/** Client entrypoint: J opens the editor (on the item tab, or the spawner tab if that was last). */
+/** Client entrypoint: J opens the editor on the tab used last. */
 public final class StacksmithClient implements ClientModInitializer {
     static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Identifier.fromNamespaceAndPath(StacksmithMod.MOD_ID, "main"));
     static KeyMapping openKey;
-    /** Which editor the key reopens; set by the editors as they open. */
-    static boolean spawnerLast;
 
     @Override
     public void onInitializeClient() {
@@ -22,7 +20,7 @@ public final class StacksmithClient implements ClientModInitializer {
             // Key mappings only see presses while no screen has the input, so this never opens
             // the editor over another screen.
             while (openKey.consumeClick()) {
-                mc.setScreenAndShow(spawnerLast ? new SpawnerEditorScreen(null) : new ItemEditorScreen(null));
+                mc.setScreenAndShow(StacksmithScreen.open(StacksmithScreen.lastTab, null));
             }
         });
     }

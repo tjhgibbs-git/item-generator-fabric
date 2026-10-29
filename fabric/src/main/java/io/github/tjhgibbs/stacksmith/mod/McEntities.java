@@ -26,11 +26,23 @@ public final class McEntities {
     public static Entity create(EntitySpec spec, Level level) {
         try {
             CompoundTag tag = McNbt.toGame(spec.toTag());
-            return EntityType.loadEntityRecursive(tag, level, new EntitySpawnRequest(EntitySpawnReason.LOAD, true), EntityProcessor.NOP);
+            Entity e = EntityType.loadEntityRecursive(tag, level, new EntitySpawnRequest(EntitySpawnReason.LOAD, true), EntityProcessor.NOP);
+            if (e != null) {
+                // Renderers read the id (item models, animations); a preview never joins the world.
+                assignIds(e);
+            }
+            return e;
         } catch (Exception | LinkageError e) {
             StacksmithMod.LOG.debug("No preview for {}: {}", spec.id(), e.toString());
             return null;
         }
+    }
+
+    private static int nextPreviewId = -1_000_000;
+
+    private static void assignIds(Entity e) {
+        e.setId(nextPreviewId--);
+        e.getPassengers().forEach(McEntities::assignIds);
     }
 
     /** Ids of every entity type a command can summon, sorted. */
@@ -43,6 +55,24 @@ public final class McEntities {
         }
         out.sort(null);
         return out;
+    }
+
+    /** Groups for the mob list, in display order. */
+    public static final java.util.List<String> GROUPS = java.util.List.of("Hostile", "Animals", "Water", "Other mobs", "Objects");
+
+    /** Which {@link #GROUPS} entry an entity type belongs to. */
+    public static String group(String id) {
+        Identifier key = Identifier.tryParse(id);
+        EntityType<?> t = key == null ? null : BuiltInRegistries.ENTITY_TYPE.getOptional(key).orElse(null);
+        if (t == null) {
+            return "Objects";
+        }
+        return switch (t.getCategory()) {
+            case MONSTER -> "Hostile";
+            case CREATURE, AMBIENT, AXOLOTLS -> "Animals";
+            case WATER_CREATURE, WATER_AMBIENT, UNDERGROUND_WATER_CREATURE -> "Water";
+            default -> spawnEggId(id) != null ? "Other mobs" : "Objects";
+        };
     }
 
     public static boolean isEntity(String id) {

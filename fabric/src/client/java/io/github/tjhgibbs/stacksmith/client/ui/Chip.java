@@ -22,6 +22,8 @@ public final class Chip extends AbstractButton {
     private int textColor = Theme.TEXT;
     private int accent = 0;
     private boolean leftAlign;
+    private boolean keepsFocus;
+    private net.minecraft.world.item.ItemStack icon;
 
     public Chip(Component label, int width, int height, Consumer<InputWithModifiers> onPress) {
         super(0, 0, width, height, label);
@@ -45,6 +47,23 @@ public final class Chip extends AbstractButton {
     /** A coloured stripe on the left (used for component groups). */
     public Chip accent(int c) {
         accent = c;
+        return this;
+    }
+
+    /** Clicking doesn't take focus (toolbar buttons acting on a text box keep it focused). */
+    public Chip keepsFocus() {
+        keepsFocus = true;
+        return this;
+    }
+
+    public boolean isKeepingFocus() {
+        return keepsFocus;
+    }
+
+    /** An item drawn at the left (16x16; make the chip at least 18 high). */
+    public Chip icon(net.minecraft.world.item.ItemStack stack) {
+        icon = stack;
+        leftAlign = true;
         return this;
     }
 
@@ -81,14 +100,21 @@ public final class Chip extends AbstractButton {
         }
         Font font = Minecraft.getInstance().font;
         String text = getMessage().getString();
-        int room = w - (leftAlign ? 8 + (accent != 0 ? 3 : 0) : 4);
+        int iconW = 0;
+        if (icon != null) {
+            iconW = 18;
+            if (!icon.isEmpty()) {
+                g.item(icon, x + 2 + (accent != 0 ? 3 : 0), y + (h - 16) / 2);
+            }
+        }
+        int room = w - iconW - (leftAlign ? 8 + (accent != 0 ? 3 : 0) : 4);
         if (font.width(text) > room) {
             text = font.plainSubstrByWidth(text, room - font.width("…")) + "…";
         }
         int color = !active ? Theme.TEXT_FAINT : textColor;
         int ty = y + (h - 8) / 2;
         if (leftAlign) {
-            g.text(font, text, x + 4 + (accent != 0 ? 3 : 0), ty, color, false);
+            g.text(font, text, x + 4 + iconW + (accent != 0 ? 3 : 0), ty, color, false);
         } else {
             g.text(font, text, x + (w - font.width(text)) / 2, ty, color, false);
         }

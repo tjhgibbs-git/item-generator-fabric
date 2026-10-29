@@ -77,4 +77,14 @@ class SnbtTest {
         SnbtException e = assertThrows(SnbtException.class, () -> Snbt.parse("{a:1, b:[1,2,}"));
         assertTrue(e.offset >= 12, "offset " + e.offset);
     }
+
+    @Test
+    void writesTextComponentsAsJsonAndReadsThemBack() throws SnbtException {
+        Nbt c = Snbt.parse("{text:\"Hi \\\"there\\\"\",color:\"gold\",bold:1b,italic:0b,extra:[\"a\",{text:\"b\"}]}");
+        String json = Snbt.json(c);
+        assertTrue(json.contains("\"bold\": true"), json);
+        assertTrue(json.contains("\"italic\": false"), json);
+        assertTrue(json.contains("\\\"there\\\""), json);
+        assertEquals(c, Snbt.parse(json));
+    }
 }

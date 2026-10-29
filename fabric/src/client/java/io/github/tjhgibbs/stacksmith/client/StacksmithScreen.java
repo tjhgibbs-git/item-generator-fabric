@@ -1,5 +1,6 @@
 package io.github.tjhgibbs.stacksmith.client;
 
+import io.github.tjhgibbs.stacksmith.client.ui.Chip;
 import io.github.tjhgibbs.stacksmith.client.ui.ScrollPane;
 import io.github.tjhgibbs.stacksmith.client.ui.SuggestBox;
 import io.github.tjhgibbs.stacksmith.client.ui.Theme;
@@ -18,6 +19,51 @@ import java.util.List;
  */
 public abstract class StacksmithScreen extends Screen {
     protected static final int PAD = 6;
+
+    /** The three editors, as tabs along the top. */
+    public enum Tab {
+        ITEM("Item", "Items: name, lore, enchantments and every other component"),
+        SPAWNER("Spawner", "Mob spawners: what they spawn, how often, and how many"),
+        MOB("Mob", "Mobs: type, name, gear, behaviour, stats and effects; summon them or put them in a spawner");
+
+        final String label, tip;
+
+        Tab(String label, String tip) {
+            this.label = label;
+            this.tip = tip;
+        }
+    }
+
+    /** The tab the key reopens. */
+    static Tab lastTab = Tab.ITEM;
+
+    static Screen open(Tab tab, Screen parent) {
+        return switch (tab) {
+            case ITEM -> new ItemEditorScreen(parent);
+            case MOB -> new MobEditorScreen(parent);
+            case SPAWNER -> new SpawnerEditorScreen(parent);
+        };
+    }
+
+    /** The tab row (top level) and the Import button; nested editors pass {@code null} for no tabs. */
+    protected void header(Tab current, String importTip, Runnable importAction) {
+        if (current != null) {
+            lastTab = current;
+            int x = PAD;
+            for (Tab t : Tab.values()) {
+                int w = font.width(t.label) + 20;
+                addRenderableWidget(Chip.of(t.label, w, 14, () -> {
+                    if (t != current) {
+                        minecraft.setScreenAndShow(open(t, parent));
+                    }
+                }).selected(() -> t == current).tip(t.tip).at(x, 5));
+                x += w + 2;
+            }
+        }
+        if (importAction != null) {
+            addRenderableWidget(Chip.of("Import…", 60, 14, importAction).at(width - PAD - 60, 5).tip(importTip));
+        }
+    }
 
     protected final Screen parent;
     private final List<ScrollPane> panes = new ArrayList<>();
@@ -140,6 +186,15 @@ public abstract class StacksmithScreen extends Screen {
             }
         }
         return false;
+    }
+
+    @Override
+    public void setFocused(net.minecraft.client.gui.components.events.GuiEventListener listener) {
+        if (listener instanceof io.github.tjhgibbs.stacksmith.client.ui.Chip c && c.isKeepingFocus()
+                || listener instanceof io.github.tjhgibbs.stacksmith.client.ui.Swatch s && s.isKeepingFocus()) {
+            return;
+        }
+        super.setFocused(listener);
     }
 
     @Override

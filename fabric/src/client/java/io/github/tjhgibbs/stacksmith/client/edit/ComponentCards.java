@@ -2,12 +2,15 @@ package io.github.tjhgibbs.stacksmith.client.edit;
 
 import io.github.tjhgibbs.stacksmith.client.ui.Chip;
 import io.github.tjhgibbs.stacksmith.client.ui.CodeArea;
+import io.github.tjhgibbs.stacksmith.client.ui.FormatBar;
+import io.github.tjhgibbs.stacksmith.client.ui.RichTextArea;
 import io.github.tjhgibbs.stacksmith.client.ui.SuggestBox;
 import io.github.tjhgibbs.stacksmith.client.ui.Swatch;
 import io.github.tjhgibbs.stacksmith.client.ui.Theme;
 import io.github.tjhgibbs.stacksmith.core.Ids;
 import io.github.tjhgibbs.stacksmith.core.item.ItemSpec;
 import io.github.tjhgibbs.stacksmith.core.nbt.Nbt;
+import io.github.tjhgibbs.stacksmith.core.nbt.Snbt;
 import io.github.tjhgibbs.stacksmith.core.nbt.SnbtException;
 import io.github.tjhgibbs.stacksmith.core.outline.Outline;
 import io.github.tjhgibbs.stacksmith.core.schema.ComponentSchema;
@@ -49,6 +52,11 @@ public final class ComponentCards {
 
         /** Puts the schema's starting value back. */
         void resetComponent(String id);
+
+        /** Always shown, set or not (✕ clears instead of removing the card). */
+        default boolean isPinned(String id) {
+            return false;
+        }
     }
 
     static final String MARKUP_HELP = "&0-&f colours, &#rrggbb any colour, &l bold, &o italic, &n underline, &m strike, &k magic, &r reset";
@@ -59,16 +67,15 @@ public final class ComponentCards {
     public static Card create(ComponentSchema.Info info, Host host) {
         Nbt value = host.item().get(info.id());
         Card card = switch (info.editor()) {
-            case TEXT -> TextMarkup.fromComponent(value) != null ? new TextCard(info, host) : new OutlineCard(info, host);
-            case TEXT_LIST -> value instanceof Nbt.List l && l.items().stream().allMatch(n -> TextMarkup.fromComponent(n) != null)
-                    ? new TextListCard(info, host) : new OutlineCard(info, host);
+            case TEXT -> new RichTextCard(info, host, false);
+            case TEXT_LIST -> value == null || value instanceof Nbt.List ? new RichTextCard(info, host, true) : new OutlineCard(info, host);
             case INT, FLOAT -> value instanceof Nbt.Num ? new NumberCard(info, host) : new OutlineCard(info, host);
             case BOOL -> value instanceof Nbt.Num ? new BoolCard(info, host) : new OutlineCard(info, host);
             case UNIT -> new UnitCard(info, host);
             case ENUM -> value instanceof Nbt.Str ? new EnumCard(info, host) : new OutlineCard(info, host);
             case COLOR -> value instanceof Nbt.Num ? new ColorCard(info, host) : new OutlineCard(info, host);
             case ID -> value instanceof Nbt.Str ? new IdCard(info, host) : new OutlineCard(info, host);
-            case ENCHANTMENTS -> value instanceof Nbt.Compound ? new EnchantmentsCard(info, host) : new OutlineCard(info, host);
+            case ENCHANTMENTS -> value == null || value instanceof Nbt.Compound ? new EnchantmentsCard(info, host) : new OutlineCard(info, host);
             case MODIFIERS -> ModifiersCard.fits(value) ? new ModifiersCard(info, host) : new OutlineCard(info, host);
             default -> new OutlineCard(info, host);
         };
@@ -84,8 +91,9 @@ public final class ComponentCards {
             super(Ids.pretty(info.id()), Theme.group(info.group()), info.about().isEmpty() ? info.id() : info.about() + "\n" + info.id());
             this.info = info;
             this.host = host;
-            headerButton("✕", "Remove this component", () -> host.removeComponent(info.id())).color(Theme.BAD);
-            if (info.defaultValue() != null) {
+            boolean pinned = host.isPinned(info.id());
+            headerButton("✕", pinned ? "Clear" : "Remove this component", () -> host.removeComponent(info.id())).color(Theme.BAD);
+            if (info.defaultValue() != null && !pinned) {
                 headerButton("↺", "Back to the starting value", () -> host.resetComponent(info.id()));
             }
         }
@@ -111,89 +119,182 @@ public final class ComponentCards {
         return box;
     }
 
-    static final class TextCard extends ComponentCard {
-        private final EditBox box;
-        private Component preview;
+    /** How name and lore cards show their text; one choice for all of them, remembered. */
+    public enum TextView {
+        STYLED("Styled", "Edit it as it looks on the item, with colour and style buttons"),
+        JSON("JSON", "The text component as JSON, exactly as stored"),
+        OUTLINE("Outline", "The text component as a readable outline");
 
-        TextCard(ComponentSchema.Info info, Host host) {
-            super(info, host);
-            String markup = TextMarkup.fromComponent(value());
-            box = body(markupBox(font, markup == null ? "" : markup, 100, s -> {
-                Nbt c = TextMarkup.toComponent(s, info.upright());
-                set(c);
-                preview = McText.toGame(c, host.registries());
-            }));
-            preview = McText.toGame(value(), host.registries());
-        }
+        final String label, tip;
 
-        @Override
-        protected int layoutBody(int x, int y, int w) {
-            box.setX(x);
-            box.setY(y);
-            box.setWidth(w);
-            return 30;
-        }
-
-        @Override
-        protected void extractBody(GuiGraphicsExtractor g, int x, int y, int w, int mouseX, int mouseY) {
-            if (preview != null) {
-                var lines = font.split(preview, w);
-                if (!lines.isEmpty()) {
-                    g.text(font, lines.getFirst(), x + 1, y + 20, 0xFFFFFFFF, true);
-                }
-            }
+        TextView(String label, String tip) {
+            this.label = label;
+            this.tip = tip;
         }
     }
 
-    static final class TextListCard extends ComponentCard {
-        private final List<EditBox> lines = new ArrayList<>();
-        private final List<Chip> removers = new ArrayList<>();
-        private final Chip add;
+    public static TextView textView = TextView.STYLED;
 
-        TextListCard(ComponentSchema.Info info, Host host) {
+    /**
+     * A name ({@code list = false}) or lore: styled text with a toolbar, or the same value as
+     * JSON or as an outline. Works on an absent component too (typing creates it), so the
+     * screen can always show Name and Lore.
+     */
+    static final class RichTextCard extends ComponentCard {
+        private final boolean list;
+        private final TextView view;
+        private FormatBar bar;
+        private RichTextArea area;
+        private CodeArea code;
+        private String error = "";
+        private String note = "";
+
+        RichTextCard(ComponentSchema.Info info, Host host, boolean list) {
             super(info, host);
-            Nbt.List list = (Nbt.List) value();
-            for (int i = 0; i < list.size(); i++) {
-                int index = i;
-                String markup = TextMarkup.fromComponent(list.get(i));
-                lines.add(body(markupBox(font, markup == null ? "" : markup, 100, s -> {
-                    Nbt.List l = (Nbt.List) value();
-                    if (index < l.size()) {
-                        l.set(index, TextMarkup.toComponent(s, info.upright()));
-                        host.changed();
-                    }
-                })));
-                removers.add(body(Chip.of("✕", 14, 16, () -> {
-                    Nbt.List l = (Nbt.List) value();
-                    if (index < l.size()) {
-                        l.remove(index);
-                        host.changed();
-                        host.rebuild();
-                    }
-                }).color(Theme.BAD).tip("Remove this line")));
+            this.list = list;
+            TextView want = textView;
+            List<String> markup = markupLines();
+            if (want == TextView.STYLED && markup == null) {
+                want = TextView.JSON;
+                note = "Uses features the styled view can't show (hover, click, translations...).";
             }
-            add = body(Chip.of("+ Add line", 70, 14, () -> {
-                ((Nbt.List) value()).add(TextMarkup.toComponent("", info.upright()));
+            view = want;
+            for (TextView v : List.of(TextView.OUTLINE, TextView.JSON, TextView.STYLED)) {
+                headerButton(v.label, font.width(v.label) + 8, v.tip, () -> {
+                    textView = v;
+                    host.rebuild();
+                }).selected(() -> view == v);
+            }
+            switch (view) {
+                case STYLED -> {
+                    area = body(new RichTextArea(String.join("\n", markup), !list)
+                            .baseColor(list ? 0xAA00AA : 0xFFFFFF)
+                            .lines(list ? 3 : 1, 14)
+                            .placeholder(list ? "Type lore here: one line per line" : "Type a name, e.g. &6&lExcalibur")
+                            .onChange(this::applyStyled));
+                    bar = new FormatBar(() -> area);
+                    bar.widgets().forEach(this::body);
+                }
+                case JSON, OUTLINE -> {
+                    Nbt v = value();
+                    String text = v == null ? "" : view == TextView.JSON ? Snbt.json(v) : Outline.write(v).stripTrailing();
+                    code = body(new CodeArea(text, 100).lines(list ? 3 : 1, 16)
+                            .placeholder(view == TextView.JSON ? (list ? "[\"first line\", {\"text\": \"second\", \"color\": \"gold\"}]"
+                                    : "{\"text\": \"Excalibur\", \"color\": \"gold\"}") : (list ? "- first line" : "text: Excalibur")));
+                    code.onChange(this::applyCode);
+                }
+            }
+            updateStatus();
+        }
+
+        private static String defaultName() {
+            return "&6&lExcalibur";
+        }
+
+        /** The value as one markup string per line, or null if markup can't express it. */
+        private List<String> markupLines() {
+            Nbt v = value();
+            List<String> out = new ArrayList<>();
+            if (v == null) {
+                out.add("");
+                return out;
+            }
+            if (list) {
+                if (!(v instanceof Nbt.List l)) {
+                    return null;
+                }
+                for (Nbt n : l.items()) {
+                    String m = TextMarkup.fromComponent(n);
+                    if (m == null) {
+                        return null;
+                    }
+                    out.add(m);
+                }
+                if (out.isEmpty()) {
+                    out.add("");
+                }
+                return out;
+            }
+            String m = TextMarkup.fromComponent(v);
+            if (m == null) {
+                return null;
+            }
+            out.add(m);
+            return out;
+        }
+
+        private void applyStyled(List<String> lines) {
+            boolean empty = lines.stream().allMatch(String::isEmpty);
+            if (empty) {
+                host.item().unset(info.id());
                 host.changed();
-                host.rebuild();
-            }));
-            status = list.size() == 1 ? "1 line" : list.size() + " lines";
+            } else if (list) {
+                Nbt.List l = new Nbt.List();
+                lines.forEach(s -> l.add(TextMarkup.toComponent(s, info.upright())));
+                set(l);
+            } else {
+                set(TextMarkup.toComponent(lines.getFirst(), info.upright()));
+            }
+            updateStatus();
+        }
+
+        private void applyCode(String text) {
+            try {
+                if (text.isBlank()) {
+                    host.item().unset(info.id());
+                    host.changed();
+                } else {
+                    Nbt parsed = view == TextView.JSON ? Snbt.parse(text) : Outline.read(text);
+                    set(parsed);
+                }
+                error = "";
+                code.errorLine(0);
+            } catch (SnbtException e) {
+                error = e.getMessage();
+                code.errorLine(e.line);
+            }
+            updateStatus();
+        }
+
+        private void updateStatus() {
+            Nbt v = value();
+            if (list && v instanceof Nbt.List l) {
+                status = l.size() == 1 ? "1 line" : l.size() + " lines";
+            } else {
+                status = v == null ? "not set" : "";
+            }
+            statusColor = v == null ? Theme.TEXT_FAINT : Theme.TEXT_DIM;
         }
 
         @Override
         protected int layoutBody(int x, int y, int w) {
             int cy = y;
-            for (int i = 0; i < lines.size(); i++) {
-                lines.get(i).setX(x);
-                lines.get(i).setY(cy);
-                lines.get(i).setWidth(w - 16);
-                removers.get(i).setX(x + w - 14);
-                removers.get(i).setY(cy);
-                cy += 18;
+            if (!note.isEmpty()) {
+                cy += 11;
             }
-            add.setX(x);
-            add.setY(cy);
-            return cy - y + 14;
+            if (bar != null) {
+                cy += bar.layout(x, cy, w) + 3;
+                area.setX(x);
+                area.setY(cy);
+                area.setWidth(w);
+                cy += area.getHeight();
+            } else {
+                code.setX(x);
+                code.setY(cy);
+                code.setWidth(w);
+                cy += code.getHeight() + (error.isEmpty() ? 0 : 11);
+            }
+            return cy - y;
+        }
+
+        @Override
+        protected void extractBody(GuiGraphicsExtractor g, int x, int y, int w, int mouseX, int mouseY) {
+            if (!note.isEmpty()) {
+                g.text(font, font.plainSubstrByWidth(note, w), x, y + 1, Theme.WARN, false);
+            }
+            if (code != null && !error.isEmpty()) {
+                g.text(font, font.plainSubstrByWidth(error, w), x, code.getY() + code.getHeight() + 2, Theme.BAD, false);
+            }
         }
     }
 
@@ -422,7 +523,7 @@ public final class ComponentCards {
         EnchantmentsCard(ComponentSchema.Info info, Host host) {
             super(info, host);
             List<String> all = McRegistries.ids("minecraft:enchantment", host.registries());
-            List<String> keys = new ArrayList<>(((Nbt.Compound) value()).keys());
+            List<String> keys = value() instanceof Nbt.Compound c ? new ArrayList<>(c.keys()) : new ArrayList<>();
             for (String key : keys) {
                 String[] current = {key};
                 SuggestBox id = body(new SuggestBox(font, 100, 16, Component.literal("Enchantment"), () -> all));
@@ -458,12 +559,19 @@ public final class ComponentCards {
                 ids.add(id);
                 levels.add(level);
                 removers.add(body(Chip.of("✕", 14, 16, () -> {
-                    ((Nbt.Compound) value()).remove(current[0]);
+                    Nbt.Compound map = (Nbt.Compound) value();
+                    map.remove(current[0]);
+                    if (map.isEmpty()) {
+                        host.item().unset(info.id());
+                    }
                     host.changed();
                     host.rebuild();
-                }).color(Theme.BAD)));
+                }).color(Theme.BAD).tip("Remove this enchantment")));
             }
             add = body(Chip.of("+ Add enchantment", 100, 14, () -> {
+                if (!(value() instanceof Nbt.Compound)) {
+                    host.item().set(info.id(), new Nbt.Compound());
+                }
                 Nbt.Compound map = (Nbt.Compound) value();
                 String next = all.stream().filter(e -> !map.has(e)).findFirst().orElse(null);
                 if (next != null) {
@@ -472,7 +580,8 @@ public final class ComponentCards {
                     host.rebuild();
                 }
             }));
-            status = keys.size() == 1 ? "1 enchantment" : keys.size() + " enchantments";
+            status = keys.isEmpty() ? "none" : keys.size() == 1 ? "1 enchantment" : keys.size() + " enchantments";
+            statusColor = keys.isEmpty() ? Theme.TEXT_FAINT : Theme.TEXT_DIM;
         }
 
         @Override

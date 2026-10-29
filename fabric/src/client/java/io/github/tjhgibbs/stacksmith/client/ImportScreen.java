@@ -142,9 +142,8 @@ public final class ImportScreen extends StacksmithScreen {
                 minecraft.setScreenAndShow(new SpawnerEditorScreen(rootParent()));
             }
             case Importer.EntityResult r -> {
-                Session.spawner = new SpawnerSpec(r.entity());
-                Session.spawnerEntry = 0;
-                minecraft.setScreenAndShow(new SpawnerEditorScreen(rootParent()));
+                Session.mob = r.entity();
+                minecraft.setScreenAndShow(new MobEditorScreen(rootParent()));
             }
             case Importer.BlockResult r -> {
                 String id = r.state().contains("[") ? r.state().substring(0, r.state().indexOf('[')) : r.state();

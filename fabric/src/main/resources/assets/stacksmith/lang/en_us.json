@@ -1,12 +1,10 @@
 {
   "key.stacksmith.open": "Open Stacksmith",
   "key.category.stacksmith.main": "Stacksmith",
-
   "stacksmith.screen.item": "Stacksmith · Item",
   "stacksmith.screen.spawner": "Stacksmith · Spawner",
   "stacksmith.screen.import": "Import",
   "stacksmith.screen.pick_item": "Pick an item",
-
   "stacksmith.button.get": "Get item",
   "stacksmith.button.copy_give": "Copy /give",
   "stacksmith.button.run": "Run",
@@ -20,7 +18,6 @@
   "stacksmith.button.import_held": "Held item",
   "stacksmith.button.import_block": "Spawner I'm looking at",
   "stacksmith.button.import_text": "Import text",
-
   "stacksmith.tooltip.get": "Put the item in your inventory, like the creative menu does. Works on any server in creative, no op needed, any size.",
   "stacksmith.tooltip.get_creative": "Needs creative mode.",
   "stacksmith.tooltip.copy_give": "Copy the /give command to the clipboard.",
@@ -36,11 +33,10 @@
   "stacksmith.tooltip.place_no_permission": "This server doesn't let you use /setblock.",
   "stacksmith.tooltip.place_too_long": "Too long to send from chat (256). Use Get command block instead.",
   "stacksmith.tooltip.copy_setblock": "Copy /setblock ~ ~ ~ spawner{...} to the clipboard.",
-  "stacksmith.tooltip.copy_summon": "Copy a /summon of the selected mob.",
+  "stacksmith.tooltip.copy_summon": "Copy /summon of this mob to the clipboard.",
   "stacksmith.tooltip.import_held": "Edit %s",
   "stacksmith.tooltip.import_held_empty": "You're not holding anything.",
   "stacksmith.tooltip.import_block": "Look at a spawner first. Operators get its full data; others get what the client sees (the shown mob).",
-
   "stacksmith.msg.no_world": "Join a world first.",
   "stacksmith.msg.need_creative": "Needs creative mode.",
   "stacksmith.msg.inventory_full": "Your inventory is full.",
@@ -49,5 +45,16 @@
   "stacksmith.msg.no_permission": "You can't use /%s here",
   "stacksmith.msg.ran": "Sent /%s",
   "stacksmith.msg.copied": "Copied (%s characters)",
-  "stacksmith.msg.look_at_block": "Look at a block first"
+  "stacksmith.msg.look_at_block": "Look at a block first",
+  "stacksmith.screen.mob": "Stacksmith · Mob",
+  "stacksmith.button.get_egg": "Get spawn egg",
+  "stacksmith.button.summon": "Summon here",
+  "stacksmith.button.to_spawner": "Put in a spawner →",
+  "stacksmith.button.use_mob": "Use mob",
+  "stacksmith.tooltip.get_egg": "A spawn egg that makes exactly this mob. Needs creative mode.",
+  "stacksmith.tooltip.get_egg_none": "This type has no spawn egg. Use Summon here or Copy /summon.",
+  "stacksmith.tooltip.summon": "Run /summon where you stand.",
+  "stacksmith.tooltip.summon_no_permission": "This server doesn't let you use /summon. The spawn egg still works in creative.",
+  "stacksmith.tooltip.summon_too_long": "Too long to send from chat (256). Use the spawn egg, or paste /summon into a command block.",
+  "stacksmith.tooltip.to_spawner": "Start a spawner with this mob (opens the Spawner tab)."
 }

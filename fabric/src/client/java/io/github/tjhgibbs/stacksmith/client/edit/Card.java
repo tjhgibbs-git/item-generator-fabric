@@ -38,7 +38,11 @@ public abstract class Card implements ScrollPane.Row {
 
     /** Adds a small button to the header's right end (added right to left). */
     protected Chip headerButton(String label, String tip, Runnable action) {
-        Chip c = Chip.of(label, 13, 11, action).tip(tip);
+        return headerButton(label, 13, tip, action);
+    }
+
+    protected Chip headerButton(String label, int width, String tip, Runnable action) {
+        Chip c = Chip.of(label, width, 11, action).tip(tip);
         headerButtons.add(c);
         return c;
     }

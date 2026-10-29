@@ -14,6 +14,7 @@ public final class Swatch extends AbstractButton {
     private final int rgb;
     private final Runnable onPress;
     private final BooleanSupplier selected;
+    private boolean keepsFocus;
 
     public Swatch(int rgb, String name, int size, BooleanSupplier selected, Runnable onPress) {
         super(0, 0, size, size, Component.literal(name));
@@ -21,6 +22,16 @@ public final class Swatch extends AbstractButton {
         this.onPress = onPress;
         this.selected = selected;
         setTooltip(Tooltip.create(Component.literal(name)));
+    }
+
+    /** Clicking doesn't take focus (see {@link Chip#keepsFocus()}). */
+    public Swatch keepsFocus() {
+        keepsFocus = true;
+        return this;
+    }
+
+    public boolean isKeepingFocus() {
+        return keepsFocus;
     }
 
     @Override

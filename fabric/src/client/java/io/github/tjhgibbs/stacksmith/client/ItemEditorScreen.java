@@ -59,6 +59,8 @@ import java.util.function.Consumer;
  */
 public final class ItemEditorScreen extends StacksmithScreen implements ComponentCards.Host {
     static final ComponentSchema SCHEMA = ComponentSchema.bundled();
+    /** Always on screen at the top of the form, set or not: what almost every item needs. */
+    static final List<String> PINNED = List.of("minecraft:custom_name", "minecraft:lore", "minecraft:enchantments");
     private static final int TOP = 24, FOOTER = 46;
     private static final long DEBOUNCE_MS = 120;
 
@@ -128,9 +130,6 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
     @Override
     protected void init() {
         SuggestBox.closeAll();
-        if (onDone == null) {
-            StacksmithClient.spawnerLast = false;
-        }
         if (itemIds == null) {
             itemIds = new ArrayList<>();
             BuiltInRegistries.ITEM.keySet().forEach(k -> itemIds.add(k.toString()));
@@ -144,14 +143,8 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
     }
 
     private void buildHeader() {
-        if (onDone == null) {
-            addRenderableWidget(Chip.of("Item", 46, 14, () -> {
-            }).selected(() -> true).at(PAD, 5));
-            addRenderableWidget(Chip.of("Spawner", 54, 14, () -> minecraft.setScreenAndShow(new SpawnerEditorScreen(parent))).at(PAD + 48, 5)
-                    .tip("Mob spawners: what they spawn, how often, and what the mobs carry"));
-        }
-        addRenderableWidget(Chip.of("Import…", 60, 14, () -> minecraft.setScreenAndShow(new ImportScreen(this, this::importItem)))
-                .at(width - PAD - 60, 5).tip("Held item, inventory, or a pasted /give, /setblock or /summon"));
+        header(onDone == null ? Tab.ITEM : null, "Held item, inventory, or a pasted /give, /setblock or /summon",
+                () -> minecraft.setScreenAndShow(new ImportScreen(this, this::importItem)));
     }
 
     private void buildLeft() {
@@ -226,7 +219,7 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
         String group = null;
         int count = 0;
         for (ComponentSchema.Info info : available) {
-            if (spec.components().has(info.id()) || spec.removed().contains(info.id())) {
+            if (spec.components().has(info.id()) || spec.removed().contains(info.id()) || PINNED.contains(info.id())) {
                 continue;
             }
             if (!q.isEmpty() && !info.id().contains(q) && !info.about().toLowerCase(Locale.ROOT).contains(q)) {
@@ -302,11 +295,20 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
             if (!spec.removed().isEmpty()) {
                 cards.add(new RemovedCard());
             }
-            for (String id : List.copyOf(spec.components().keys())) {
+            for (String id : PINNED) {
+                if (!spec.removed().contains(id)) {
+                    cards.add(ComponentCards.create(SCHEMA.info(id), this));
+                }
+            }
+            List<String> others = spec.components().keys().stream().filter(id -> !PINNED.contains(id)).toList();
+            if (!others.isEmpty()) {
+                cards.add(new HeaderRow("More (" + others.size() + ")"));
+            }
+            for (String id : others) {
                 cards.add(ComponentCards.create(SCHEMA.info(id), this));
             }
-            if (spec.isPlain()) {
-                cards.add(new HeaderRow("No components yet: add one from the list on the left."));
+            if (others.isEmpty()) {
+                cards.add(new HeaderRow("More: pick from the list on the left"));
             }
         }
         addPaneWidgets(cards);
@@ -428,6 +430,11 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
     }
 
     @Override
+    public boolean isPinned(String id) {
+        return PINNED.contains(id);
+    }
+
+    @Override
     public void removeComponent(String id) {
         spec.unset(id);
         changed();
@@ -518,7 +525,7 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
         ItemView.icon(g, stack.isEmpty() ? null : stack, PAD, TOP + 2, 32);
         label(g, "Add component", PAD + 1, TOP + 44);
         // Middle header.
-        String head = Session.outlineView ? "Outline" : "Components (" + (spec.components().size() + spec.removed().size()) + ")";
+        String head = Session.outlineView ? "Whole item as outline" : Ids.pretty(spec.id());
         label(g, head, midX() + 1, TOP + 3);
         // Right: preview.
         int rx = rightX(), rw = rightW();

@@ -35,6 +35,99 @@ public final class Snbt {
         return sb.toString();
     }
 
+    /**
+     * Indented JSON, as text components are usually shown and shared ({@code "bold": true}).
+     * Numbers lose their SNBT suffixes and bytes 0/1 become booleans; {@link #parse} reads it
+     * back, since JSON is SNBT too.
+     */
+    public static String json(Nbt n) {
+        StringBuilder sb = new StringBuilder();
+        json(sb, n, 0);
+        return sb.toString();
+    }
+
+    private static void json(StringBuilder sb, Nbt n, int depth) {
+        switch (n) {
+            case Nbt.Str s -> jsonString(sb, s.value());
+            case Nbt.Num num -> {
+                if (num.kind() == Nbt.Num.Kind.BYTE && (num.whole() == 0 || num.whole() == 1)) {
+                    sb.append(num.whole() == 1 ? "true" : "false");
+                } else if (num.kind().integral()) {
+                    sb.append(num.asLong());
+                } else {
+                    double d = num.asDouble();
+                    sb.append(d == Math.rint(d) && Math.abs(d) < 1e15 ? Long.toString((long) d) + ".0" : Double.toString(d));
+                }
+            }
+            case Nbt.Arr a -> {
+                sb.append('[');
+                long[] v = a.values();
+                for (int i = 0; i < v.length; i++) {
+                    sb.append(i == 0 ? "" : ", ").append(v[i]);
+                }
+                sb.append(']');
+            }
+            case Nbt.List l -> {
+                if (l.isEmpty()) {
+                    sb.append("[]");
+                    return;
+                }
+                boolean multi = !allScalars(l);
+                sb.append('[');
+                for (int i = 0; i < l.size(); i++) {
+                    sb.append(i == 0 ? "" : multi ? "," : ", ");
+                    if (multi) {
+                        newline(sb, depth + 1, 2);
+                    }
+                    json(sb, l.get(i), depth + 1);
+                }
+                if (multi) {
+                    newline(sb, depth, 2);
+                }
+                sb.append(']');
+            }
+            case Nbt.Compound c -> {
+                if (c.isEmpty()) {
+                    sb.append("{}");
+                    return;
+                }
+                sb.append('{');
+                boolean first = true;
+                for (var e : c.entries()) {
+                    sb.append(first ? "" : ",");
+                    first = false;
+                    newline(sb, depth + 1, 2);
+                    jsonString(sb, e.getKey());
+                    sb.append(": ");
+                    json(sb, e.getValue(), depth + 1);
+                }
+                newline(sb, depth, 2);
+                sb.append('}');
+            }
+        }
+    }
+
+    private static void jsonString(StringBuilder sb, String s) {
+        sb.append('"');
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format(Locale.ROOT, "\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        sb.append('"');
+    }
+
     private static void write(StringBuilder sb, Nbt n, int depth, int indent) {
         switch (n) {
             case Nbt.Str s -> sb.append(quote(s.value()));

@@ -41,27 +41,21 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * The spawner editor: the spawner's timing on the left with its pool of mobs, the selected
- * mob's editor in the middle (type, name, equipment, behaviour, stats, effects, all data),
- * and a live preview of the mob, wearing and holding what it was given, on the right.
+ * The spawner editor: the pool of mobs on the left, the selected mob (summarised, with
+ * Edit mob… opening the full mob editor) and the spawner's settings in plain units in the
+ * middle, and a live preview with the outputs on the right.
  *
  * <p>Outputs: a spawner item, a command block that turns itself into the spawner when placed
  * (always active, no redstone), a /setblock where you look, or the command to copy.
  */
 public final class SpawnerEditorScreen extends StacksmithScreen {
-    private static final int TOP = 24, FOOTER = 46;
+    private static final int TOP = 24, FOOTER = 26;
     private static final long DEBOUNCE_MS = 150;
-    /** Attributes offered as fields; anything else goes in "All data". */
-    private static final String[][] ATTRIBUTES = {
-            {"minecraft:max_health", "Max health"}, {"minecraft:movement_speed", "Speed"}, {"minecraft:attack_damage", "Attack damage"},
-            {"minecraft:armor", "Armour"}, {"minecraft:knockback_resistance", "Knockback resist."}, {"minecraft:follow_range", "Follow range"},
-            {"minecraft:scale", "Scale"}};
     private static double leftScroll, midScroll;
 
     private final SpawnerSpec spawner = Session.spawner;
     private final ScrollPane left = pane(new ScrollPane());
     private final ScrollPane mid = pane(new ScrollPane());
-    private List<String> entityIds;
 
     private Entity preview;
     private String command = "";
@@ -70,8 +64,6 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     private long changedAt;
     private EditBox commandBox;
     private Button getSpawner, getCommandBlock, placeHere, copySetblock;
-    private CodeArea allData;
-    private int dataVersion, shownDataVersion;
     private final Map<EntitySpec.Slot, ItemStack> slotIcons = new EnumMap<>(EntitySpec.Slot.class);
 
     public SpawnerEditorScreen(Screen parent) {
@@ -94,11 +86,11 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     // ---- layout ------------------------------------------------------------------------------
 
     private int leftW() {
-        return Math.clamp(width * 24 / 100, 130, 170);
+        return Math.clamp(width * 22 / 100, 110, 150);
     }
 
     private int rightW() {
-        return Math.clamp(width * 28 / 100, 130, 200);
+        return Math.clamp(width * 26 / 100, 130, 190);
     }
 
     private int midX() {
@@ -120,15 +112,8 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     @Override
     protected void init() {
         SuggestBox.closeAll();
-        StacksmithClient.spawnerLast = true;
-        if (entityIds == null) {
-            entityIds = McEntities.summonableIds();
-        }
-        addRenderableWidget(Chip.of("Item", 46, 14, () -> minecraft.setScreenAndShow(new ItemEditorScreen(parent))).at(PAD, 5));
-        addRenderableWidget(Chip.of("Spawner", 54, 14, () -> {
-        }).selected(() -> true).at(PAD + 48, 5));
-        addRenderableWidget(Chip.of("Import…", 60, 14, () -> minecraft.setScreenAndShow(new ImportScreen(this, null)))
-                .at(width - PAD - 60, 5).tip("Look at a spawner, or paste a /setblock, /summon or spawner /give"));
+        header(Tab.SPAWNER, "Look at a spawner, or paste a /setblock, /summon or spawner /give",
+                () -> minecraft.setScreenAndShow(new ImportScreen(this, null)));
         buildLeft();
         buildMiddle();
         buildRight();
@@ -136,80 +121,67 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         changed();
     }
 
+    private static String mobLabel(EntitySpec e) {
+        Nbt n = e.data().get(EntitySpec.Keys.CUSTOM_NAME);
+        String markup = n == null ? null : TextMarkup.fromComponent(n);
+        return markup != null && !markup.isBlank() ? TextMarkup.plain(markup) : Ids.pretty(e.id());
+    }
+
+    /** The pool: one row per mob, selected one highlighted. */
     private void buildLeft() {
         left.clear();
-        left.bounds(PAD, TOP + 2, leftW(), bodyBottom() - TOP - 2);
-        left.add(new ItemEditorScreen.HeaderRow("Timing (ticks; 20 = 1 second)"));
-        for (SpawnerSpec.Setting s : SpawnerSpec.Setting.values()) {
-            left.add(new NumberRow(settingLabel(s), spawner.get(s), s.min, s.max, v -> {
-                spawner.set(s, v);
-                changed();
-            }, settingHelp(s)));
-        }
-        left.add(new ItemEditorScreen.HeaderRow("Spawns"));
+        left.bounds(PAD, TOP + 14, leftW(), bodyBottom() - TOP - 14);
+        boolean pool = spawner.entries().size() > 1;
         for (int i = 0; i < spawner.entries().size(); i++) {
             int index = i;
             SpawnerSpec.Entry e = spawner.entries().get(i);
-            String name = Ids.pretty(e.entity.id()) + (spawner.entries().size() > 1 ? "  ×" + e.weight : "");
-            Chip pick = new Chip(Component.literal(name), 100, 14, in -> {
+            Chip pick = Chip.of(mobLabel(e.entity), 100, 18, () -> {
                 Session.spawnerEntry = index;
                 midScroll = 0;
                 rebuild();
-            }).left().selected(() -> Session.spawnerEntry == index).accent(0xFFFF9EC7);
-            Chip remove = Chip.of("✕", 14, 14, () -> {
+            }).icon(MobEditorScreen.egg(e.entity.id())).selected(() -> Session.spawnerEntry == index);
+            if (pool) {
+                pick.setTooltip(Tooltip.create(Component.literal("Weight " + e.weight + ": picked " + percent(e.weight) + " of the time")));
+            }
+            Chip remove = Chip.of("✕", 14, 18, () -> {
                 spawner.entries().remove(index);
                 Session.spawnerEntry = Math.max(0, Session.spawnerEntry - (Session.spawnerEntry >= index ? 1 : 0));
                 changed();
                 rebuild();
-            }).color(Theme.BAD).tip("Remove from the pool");
-            remove.active = spawner.entries().size() > 1;
+            }).color(Theme.BAD).tip("Remove from the spawner");
+            remove.active = pool;
             left.add(new PairRow(pick, remove));
         }
-        left.add(new ItemEditorScreen.WidgetRow(Chip.of("+ Add mob", 80, 14, () -> {
-            spawner.entries().add(new SpawnerSpec.Entry(mob().copy(), 1));
+        left.add(new ItemEditorScreen.WidgetRow(Chip.of("+ Add mob", 80, 16, () -> {
+            spawner.entries().add(new SpawnerSpec.Entry(Session.mob.copy(), 1));
             Session.spawnerEntry = spawner.entries().size() - 1;
             changed();
             rebuild();
-        }).tip("Several mobs make a weighted pool; the spawner picks one each time"), 16));
+        }).tip("Adds the mob from the Mob tab. With several mobs the spawner picks one each time, by weight."), 18));
         addPaneWidgets(left);
         left.layout();
         left.scroll(leftScroll);
     }
 
-    private static String settingLabel(SpawnerSpec.Setting s) {
-        return switch (s) {
-            case DELAY -> "First delay";
-            case MIN_DELAY -> "Min delay";
-            case MAX_DELAY -> "Max delay";
-            case COUNT -> "Spawn count";
-            case MAX_NEARBY -> "Max nearby";
-            case PLAYER_RANGE -> "Player range";
-            case SPAWN_RANGE -> "Spawn range";
-        };
-    }
-
-    private static String settingHelp(SpawnerSpec.Setting s) {
-        return switch (s) {
-            case DELAY -> "Ticks until the first spawn after placing. Default 20.";
-            case MIN_DELAY -> "Shortest wait between spawns, in ticks. Default 200 (10 s).";
-            case MAX_DELAY -> "Longest wait between spawns, in ticks. Default 800 (40 s).";
-            case COUNT -> "Mobs tried per spawn. Default 4.";
-            case MAX_NEARBY -> "Stops spawning while this many of the mob are nearby. Default 6.";
-            case PLAYER_RANGE -> "Only spawns with a player this close (blocks). Default 16.";
-            case SPAWN_RANGE -> "How far from the spawner mobs appear (blocks). Default 4.";
-        };
+    private String percent(int weight) {
+        int total = spawner.entries().stream().mapToInt(x -> x.weight).sum();
+        return Math.round(100.0 * weight / Math.max(1, total)) + "%";
     }
 
     private void buildMiddle() {
         mid.clear();
-        mid.bounds(midX(), TOP + 2, midW(), bodyBottom() - TOP - 2);
-        EntitySpec mob = mob();
-        mid.add(new MobCard(mob));
-        mid.add(new EquipmentCard(mob));
-        mid.add(new FlagsCard(mob));
-        mid.add(new StatsCard(mob));
-        mid.add(new EffectsCard(mob));
-        mid.add(new DataCard(mob));
+        mid.bounds(midX(), TOP + 14, midW(), bodyBottom() - TOP - 14);
+        mid.add(new SelectedMobCard());
+        mid.add(new SettingsCard("How often", 0xFF8CC8FF, "When the spawner fires. It waits a random time between the two delays after each spawn.",
+                new Field(SpawnerSpec.Setting.DELAY, "First spawn after", "s", "Time from placing until the first spawn. Default 1 s."),
+                new Field(SpawnerSpec.Setting.MIN_DELAY, "Wait at least", "s", "Shortest wait between spawns. Default 10 s."),
+                new Field(SpawnerSpec.Setting.MAX_DELAY, "Wait at most", "s", "Longest wait between spawns. Default 40 s.")));
+        mid.add(new SettingsCard("How many", 0xFFFF6B6B, "How many mobs each spawn makes, and when it holds back.",
+                new Field(SpawnerSpec.Setting.COUNT, "Mobs per spawn", "", "How many it tries to spawn each time. Default 4."),
+                new Field(SpawnerSpec.Setting.MAX_NEARBY, "Pause with", "nearby", "Stops while this many of its mobs are close by. Default 6.")));
+        mid.add(new SettingsCard("Where", 0xFF7BD88F, "When it is active, and how far out mobs appear.",
+                new Field(SpawnerSpec.Setting.PLAYER_RANGE, "Runs with a player within", "blocks", "Only spawns while a player is this close. Default 16."),
+                new Field(SpawnerSpec.Setting.SPAWN_RANGE, "Mobs appear within", "blocks", "How far from the spawner mobs are placed. Default 4.")));
         addPaneWidgets(mid);
         mid.layout();
         mid.scroll(midScroll);
@@ -229,14 +201,11 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     }
 
     private void buildFooter() {
-        int y = height - FOOTER;
-        commandBox = addRenderableWidget(new EditBox(font, PAD, y, width - PAD * 2 - 58, 16, Component.literal("Command")));
+        int y = height - FOOTER + 3;
+        commandBox = addRenderableWidget(new EditBox(font, PAD, y + 2, width - PAD * 2 - 64 - 50, 16, Component.literal("Command")));
         commandBox.setMaxLength(Commands.COMMAND_BLOCK_LIMIT);
         commandBox.setEditable(false);
-        addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.copy_summon"), b ->
-                        toast(Delivery.copy("/" + Commands.summon(mob(), "~ ~1 ~", style())), true))
-                .bounds(PAD, y + 20, 100, 20).tooltip(Tooltip.create(Component.translatable("stacksmith.tooltip.copy_summon"))).build());
-        addRenderableWidget(Button.builder(Component.translatable("gui.done"), b -> onClose()).bounds(width - PAD - 60, y + 20, 60, 20).build());
+        addRenderableWidget(Button.builder(Component.translatable("gui.done"), b -> onClose()).bounds(width - PAD - 60, y, 60, 20).build());
     }
 
     private Commands.Style style() {
@@ -245,7 +214,6 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
 
     void changed() {
         dirty = true;
-        dataVersion++;
         changedAt = System.currentTimeMillis();
     }
 
@@ -293,10 +261,6 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
             dirty = false;
             recompute();
         }
-        if (allData != null && shownDataVersion != dataVersion && !allData.isFocused()) {
-            allData.setText(Outline.write(mob().data()).stripTrailing(), true);
-            shownDataVersion = dataVersion;
-        }
     }
 
     private void recompute() {
@@ -342,19 +306,17 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         panel(g, PAD - 2, top, leftW() + 4, bottom - top);
         panel(g, midX() - 2, top, midW() + 4, bottom - top);
         panel(g, rightX() - 2, top, rightW() + 4, bottom - top);
+        label(g, spawner.entries().size() > 1 ? "Spawns (picks one)" : "Spawns", PAD + 1, TOP + 2);
+        label(g, "Spawner", midX() + 1, TOP + 2);
         int rx = rightX(), rw = rightW();
         label(g, "Preview", rx + 1, TOP + 2);
-        int py = TOP + 14, ph = bodyBottom() - 4 * 22 - py - 40;
-        g.fillGradient(rx, py, rx + rw, py + ph, 0xFF20303C, 0xFF0E1418);
-        if (preview instanceof LivingEntity living) {
-            int size = (int) Math.max(12, Math.min(ph * 0.42, rw * 0.5) / Math.max(1, Math.max(living.getBbHeight(), living.getBbWidth() * 1.2)));
-            InventoryScreen.extractEntityInInventoryFollowsMouse(g, rx, py, rx + rw, py + ph, size, 0.0625f, mouseX, mouseY, living);
-        } else {
-            g.centeredText(font, Component.literal(preview == null ? "No preview" : "Not a mob"), rx + rw / 2, py + ph / 2 - 4, Theme.TEXT_DIM);
-        }
+        int py = TOP + 14, ph = bodyBottom() - 4 * 22 - py - 26;
+        MobPreview.draw(g, font, preview, rx, py, rw, ph, mouseX, mouseY);
         int y = py + ph + 4;
-        List<String> lines = problems.isEmpty() ? List.of() : problems;
-        for (String p : lines) {
+        if (problems.isEmpty()) {
+            g.text(font, "✔ Ready", rx + 2, y, Theme.GOOD, false);
+        }
+        for (String p : problems) {
             for (FormattedCharSequence l : font.split(Component.literal(p), rw - 4)) {
                 if (y > bodyBottom() - 4 * 22 - 2) {
                     break;
@@ -363,12 +325,9 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                 y += 10;
             }
         }
-        if (lines.isEmpty()) {
-            g.text(font, "✔ Ready", rx + 2, y, Theme.GOOD, false);
-        }
         int len = command.length() + 1;
-        String count = len + " chars";
-        g.text(font, count, width - PAD - font.width(count), height - FOOTER + 4,
+        String count = len + "/" + Commands.CHAT_LIMIT;
+        g.text(font, count, commandBox.getX() + commandBox.getWidth() + 4, commandBox.getY() + 4,
                 len <= Commands.CHAT_LIMIT ? Theme.TEXT_DIM : Theme.WARN, false);
     }
 
@@ -384,48 +343,6 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     }
 
     // ---- rows and cards -----------------------------------------------------------------------
-
-    /** "Label [ 200 ]" with validation. */
-    private final class NumberRow implements ScrollPane.Row {
-        private final String label;
-        private final EditBox box;
-
-        NumberRow(String label, int value, int min, int max, java.util.function.IntConsumer onChange, String help) {
-            this.label = label;
-            box = new EditBox(font, 0, 0, 44, 14, Component.literal(label));
-            box.setValue(Integer.toString(value));
-            box.setTooltip(Tooltip.create(Component.literal(help + " (" + min + " to " + max + ")")));
-            box.setResponder(s -> {
-                try {
-                    int v = Integer.parseInt(s.strip());
-                    boolean ok = v >= min && v <= max;
-                    box.setTextColor(ok ? Theme.TEXT : Theme.BAD);
-                    if (ok) {
-                        onChange.accept(v);
-                    }
-                } catch (NumberFormatException e) {
-                    box.setTextColor(Theme.BAD);
-                }
-            });
-        }
-
-        @Override
-        public int layout(int x, int y, int width) {
-            box.setX(x + width - 46);
-            box.setY(y);
-            return 16;
-        }
-
-        @Override
-        public void extract(GuiGraphicsExtractor g, int x, int y, int width, int height, int mouseX, int mouseY) {
-            g.text(font, label, x + 2, y + 3, Theme.TEXT, false);
-        }
-
-        @Override
-        public List<net.minecraft.client.gui.components.AbstractWidget> widgets() {
-            return List.of(box);
-        }
-    }
 
     /** A wide widget with a small one at its right. */
     private static final class PairRow implements ScrollPane.Row {
@@ -452,34 +369,108 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         }
     }
 
-    /** Type, weight and name. */
-    private final class MobCard extends Card {
-        private final SuggestBox type;
-        private final EditBox weight, name;
-        private final Chip nameVisible;
+    /** One setting: a label, a box in friendly units (seconds for ticks), and the unit. */
+    private record Field(SpawnerSpec.Setting setting, String label, String unit, String help) {
+        boolean seconds() {
+            return unit.equals("s");
+        }
+    }
 
-        MobCard(EntitySpec mob) {
-            super("Mob", 0xFFFF9EC7, "What this spawner makes");
-            type = body(new SuggestBox(font, 100, 16, Component.literal("Mob type"), () -> entityIds));
-            type.setValueQuietly(Ids.brief(mob.id()));
-            type.onAccept(s -> {
-                String id = Ids.full(s);
-                boolean ok = McEntities.isEntity(id);
-                type.setTextColor(ok ? Theme.TEXT : Theme.BAD);
-                if (ok && !id.equals(mob.id())) {
-                    mob.id(id);
-                    changed();
-                }
-            });
-            type.setTooltip(Tooltip.create(Component.literal("Mob type: type to search")));
-            // Only a pool has weights (the pane controls visibility, so leave it out entirely).
-            weight = spawner.entries().size() > 1 ? body(new EditBox(font, 0, 0, 30, 16, Component.literal("Weight"))) : null;
-            if (weight != null) {
-                weight.setValue(Integer.toString(entry().weight));
-                weight.setTooltip(Tooltip.create(Component.literal("Weight in the pool: how often this one is picked compared with the others")));
-                weight.setResponder(s -> {
+    /** A titled group of settings, each on its own line. */
+    private final class SettingsCard extends Card {
+        private final List<Field> fields;
+        private final List<EditBox> boxes = new ArrayList<>();
+
+        SettingsCard(String title, int accent, String about, Field... fields) {
+            super(title, accent, about);
+            this.fields = List.of(fields);
+            for (Field f : fields) {
+                EditBox box = body(new EditBox(font, 0, 0, 40, 14, Component.literal(f.label())));
+                int v = spawner.get(f.setting());
+                box.setValue(f.seconds() ? trim(v / 20.0) : Integer.toString(v));
+                box.setTooltip(Tooltip.create(Component.literal(f.help())));
+                box.setResponder(t -> {
                     try {
-                        int v = Integer.parseInt(s.strip());
+                        double d = Double.parseDouble(t.strip());
+                        int ticks = (int) Math.round(f.seconds() ? d * 20 : d);
+                        boolean ok = ticks >= f.setting().min && ticks <= f.setting().max && (f.seconds() || d == Math.rint(d));
+                        box.setTextColor(ok ? Theme.TEXT : Theme.BAD);
+                        if (ok) {
+                            spawner.set(f.setting(), ticks);
+                            changed();
+                        }
+                    } catch (NumberFormatException e) {
+                        box.setTextColor(Theme.BAD);
+                    }
+                });
+                boxes.add(box);
+            }
+        }
+
+        private static String trim(double d) {
+            return d == Math.rint(d) ? Long.toString((long) d) : String.format(Locale.ROOT, "%.2f", d).replaceAll("0+$", "");
+        }
+
+        @Override
+        protected int layoutBody(int x, int y, int w) {
+            for (int i = 0; i < boxes.size(); i++) {
+                EditBox b = boxes.get(i);
+                b.setX(x + w - 40 - unitW());
+                b.setY(y + i * 17);
+            }
+            return boxes.size() * 17 - 3;
+        }
+
+        private int unitW() {
+            int m = 0;
+            for (Field f : fields) {
+                m = Math.max(m, font.width(f.unit()));
+            }
+            return m == 0 ? 0 : m + 4;
+        }
+
+        @Override
+        protected void extractBody(GuiGraphicsExtractor g, int x, int y, int w, int mouseX, int mouseY) {
+            for (int i = 0; i < fields.size(); i++) {
+                Field f = fields.get(i);
+                int ry = y + i * 17;
+                int labelRoom = w - 44 - unitW();
+                g.text(font, font.plainSubstrByWidth(f.label(), labelRoom), x, ry + 3, Theme.TEXT, false);
+                if (!f.unit().isEmpty()) {
+                    g.text(font, f.unit(), x + w - unitW() + 4, ry + 3, Theme.TEXT_DIM, false);
+                }
+                boolean def = spawner.get(f.setting()) == f.setting().defaultValue;
+                if (!def && mouseX >= x && mouseX < x + labelRoom && mouseY >= ry && mouseY < ry + 14) {
+                    g.setTooltipForNextFrame(font, Component.literal(f.help()), mouseX, mouseY);
+                }
+            }
+        }
+    }
+
+    /** The selected mob at a glance, with Edit mob… and (in a pool) its weight. */
+    private final class SelectedMobCard extends Card {
+        private final Chip edit, fromTab;
+        private final EditBox weight;
+
+        SelectedMobCard() {
+            super("Mob", 0xFFFF9EC7, "What this spawner makes. Edit mob… opens the full mob editor.");
+            EntitySpec mob = mob();
+            edit = body(Chip.of("Edit mob…", 70, 16, () -> minecraft.setScreenAndShow(new MobEditorScreen(SpawnerEditorScreen.this, mob, result -> {
+                entry().entity = result;
+                changed();
+            }))).tip("Type, name, gear, behaviour, stats, effects"));
+            fromTab = body(Chip.of("From Mob tab", 70, 16, () -> {
+                entry().entity = Session.mob.copy();
+                changed();
+                rebuild();
+            }).tip("Replace this mob with the one in the Mob tab: " + mobLabel(Session.mob)));
+            if (spawner.entries().size() > 1) {
+                weight = body(new EditBox(font, 0, 0, 30, 14, Component.literal("Weight")));
+                weight.setValue(Integer.toString(entry().weight));
+                weight.setTooltip(Tooltip.create(Component.literal("How often this one is picked compared with the others")));
+                weight.setResponder(t -> {
+                    try {
+                        int v = Integer.parseInt(t.strip());
                         weight.setTextColor(v >= 1 ? Theme.TEXT : Theme.BAD);
                         if (v >= 1) {
                             entry().weight = v;
@@ -489,407 +480,59 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                         weight.setTextColor(Theme.BAD);
                     }
                 });
+            } else {
+                weight = null;
+            }
+        }
+
+        @Override
+        protected int layoutBody(int x, int y, int w) {
+            edit.setX(x);
+            edit.setY(y + 40);
+            fromTab.setX(x + 72);
+            fromTab.setY(y + 40);
+            if (weight != null) {
+                weight.setX(x + w - 30);
+                weight.setY(y + 41);
+            }
+            return 56;
+        }
+
+        @Override
+        protected void extractBody(GuiGraphicsExtractor g, int x, int y, int w, int mouseX, int mouseY) {
+            EntitySpec mob = mob();
+            g.fill(x, y, x + 20, y + 20, 0xFF0D1114);
+            g.outline(x, y, 20, 20, Theme.BORDER);
+            ItemStack egg = MobEditorScreen.egg(mob.id());
+            if (!egg.isEmpty()) {
+                g.item(egg, x + 2, y + 2);
             }
             Nbt n = mob.data().get(EntitySpec.Keys.CUSTOM_NAME);
-            String markup = n == null ? "" : TextMarkup.fromComponent(n);
-            name = body(new EditBox(font, 0, 0, 100, 16, Component.literal("Name")));
-            name.setMaxLength(1024);
-            name.setHint(Component.literal("Name (optional, &-codes work)"));
-            name.setValue(markup == null ? "" : markup);
-            name.setEditable(markup != null);
-            name.setTooltip(Tooltip.create(Component.literal(markup == null ? "This name uses features the box can't show; edit it in All data."
-                    : "Custom name. &6 gold, &l bold, &#ff8800 any colour, &r reset")));
-            name.setResponder(s -> {
-                mob.data().putOrRemove(EntitySpec.Keys.CUSTOM_NAME, s.isEmpty() ? null : TextMarkup.toComponent(s, false));
-                changed();
-            });
-            nameVisible = body(Chip.of("Always show name", 100, 14, () -> {
-                mob.flag(EntitySpec.Flag.NAME_VISIBLE, !mob.flag(EntitySpec.Flag.NAME_VISIBLE));
-                changed();
-            }).selected(() -> mob.flag(EntitySpec.Flag.NAME_VISIBLE)));
-        }
-
-        @Override
-        protected int layoutBody(int x, int y, int w) {
-            boolean pool = weight != null;
-            type.setX(x);
-            type.setY(y);
-            type.setWidth(pool ? w - 34 : w);
-            if (pool) {
-                weight.setX(x + w - 30);
-                weight.setY(y);
-            }
-            name.setX(x);
-            name.setY(y + 20);
-            name.setWidth(w);
-            nameVisible.setX(x);
-            nameVisible.setY(y + 40);
-            return 54;
-        }
-    }
-
-    /** Seven slots: icon (click to choose), edit, clear, drop chance. */
-    private final class EquipmentCard extends Card {
-        private final List<EntitySpec.Slot> slots = List.of(EntitySpec.Slot.HEAD, EntitySpec.Slot.CHEST, EntitySpec.Slot.LEGS,
-                EntitySpec.Slot.FEET, EntitySpec.Slot.MAINHAND, EntitySpec.Slot.OFFHAND, EntitySpec.Slot.BODY);
-        private final List<Chip> pick = new ArrayList<>(), edit = new ArrayList<>(), clear = new ArrayList<>();
-        private final List<EditBox> chance = new ArrayList<>();
-        private int bodyX, bodyY;
-
-        EquipmentCard(EntitySpec mob) {
-            super("Equipment", 0xFF7FDBCA, "What the mob wears and holds, and the chance each drops on death");
-            for (EntitySpec.Slot s : slots) {
-                ItemSpec item = mob.equipment(s);
-                pick.add(body(Chip.of(item == null ? "choose…" : Ids.pretty(item.id()), 80, 18, () ->
-                        minecraft.setScreenAndShow(new ItemPickerScreen(SpawnerEditorScreen.this, picked -> {
-                            mob.equipment(s, picked);
-                            changed();
-                        }))).left().tip("Pick an item, or one from your inventory")));
-                Chip e = body(Chip.of("✎", 16, 18, () -> {
-                    ItemSpec current = mob.equipment(s);
-                    minecraft.setScreenAndShow(new ItemEditorScreen(SpawnerEditorScreen.this, current != null ? current : new ItemSpec("stone"), result -> {
-                        mob.equipment(s, result);
-                        changed();
-                    }));
-                }).tip("Edit this item in full (enchantments, name, anything)"));
-                edit.add(e);
-                Chip c = body(Chip.of("✕", 14, 18, () -> {
-                    mob.equipment(s, null);
-                    changed();
-                    rebuild();
-                }).color(Theme.BAD).tip("Empty this slot"));
-                c.active = item != null;
-                clear.add(c);
-                EditBox box = body(new EditBox(font, 0, 0, 34, 18, Component.literal("Drop chance")));
-                box.setValue(String.format(Locale.ROOT, "%.1f", mob.dropChance(s) * 100).replace(".0", ""));
-                box.setTooltip(Tooltip.create(Component.literal("Drop chance in % (0 never, 100 always, default 8.5)")));
-                box.setResponder(t -> {
-                    try {
-                        float v = Float.parseFloat(t.strip().replace("%", ""));
-                        boolean ok = v >= 0 && v <= 100;
-                        box.setTextColor(ok ? Theme.TEXT : Theme.BAD);
-                        if (ok) {
-                            mob.dropChance(s, v / 100f);
-                            changed();
-                        }
-                    } catch (NumberFormatException ex) {
-                        box.setTextColor(Theme.BAD);
-                    }
-                });
-                chance.add(box);
-            }
-        }
-
-        @Override
-        protected int layoutBody(int x, int y, int w) {
-            bodyX = x;
-            bodyY = y;
-            int labelW = 44, iconW = 20;
-            for (int i = 0; i < slots.size(); i++) {
-                int ry = y + i * 20;
-                int px = x + labelW + iconW;
-                int pw = w - labelW - iconW - 16 - 14 - 34 - 6;
-                pick.get(i).setX(px);
-                pick.get(i).setY(ry);
-                pick.get(i).setWidth(Math.max(30, pw));
-                edit.get(i).setX(px + Math.max(30, pw) + 2);
-                edit.get(i).setY(ry);
-                clear.get(i).setX(px + Math.max(30, pw) + 20);
-                clear.get(i).setY(ry);
-                chance.get(i).setX(x + w - 34);
-                chance.get(i).setY(ry);
-            }
-            return slots.size() * 20;
-        }
-
-        @Override
-        protected void extractBody(GuiGraphicsExtractor g, int x, int y, int w, int mouseX, int mouseY) {
-            for (int i = 0; i < slots.size(); i++) {
-                int ry = y + i * 20;
-                g.text(font, slotName(slots.get(i)), x, ry + 5, Theme.TEXT_DIM, false);
-                g.fill(x + 44, ry, x + 62, ry + 18, 0xFF0D1114);
-                g.outline(x + 44, ry, 18, 18, Theme.BORDER);
-                ItemStack icon = slotIcons.get(slots.get(i));
-                if (icon != null && !icon.isEmpty()) {
-                    g.item(icon, x + 45, ry + 1);
-                    if (mouseX >= x + 44 && mouseX < x + 62 && mouseY >= ry && mouseY < ry + 18) {
-                        g.setTooltipForNextFrame(font, icon, mouseX, mouseY);
-                    }
+            Component name = n == null ? Component.literal(Ids.pretty(mob.id()))
+                    : io.github.tjhgibbs.stacksmith.mod.McText.toGame(n, Delivery.registries());
+            g.text(font, name.getVisualOrderText(), x + 24, y + 1, 0xFFFFFFFF, true);
+            g.text(font, Ids.brief(mob.id()), x + 24, y + 11, Theme.TEXT_DIM, false);
+            // Gear and a short summary line.
+            int ix = x;
+            for (ItemStack s : slotIcons.values()) {
+                if (!s.isEmpty()) {
+                    g.item(s, ix, y + 22);
+                    ix += 17;
                 }
             }
-        }
-
-        private String slotName(EntitySpec.Slot s) {
-            return switch (s) {
-                case HEAD -> "Head";
-                case CHEST -> "Chest";
-                case LEGS -> "Legs";
-                case FEET -> "Feet";
-                case MAINHAND -> "Main hand";
-                case OFFHAND -> "Off hand";
-                case BODY -> "Body";
-                case SADDLE -> "Saddle";
-            };
-        }
-    }
-
-    /** On/off behaviour switches. */
-    private final class FlagsCard extends Card {
-        private final List<Chip> chips = new ArrayList<>();
-
-        FlagsCard(EntitySpec mob) {
-            super("Behaviour", 0xFF8CC8FF, "Switches saved on the mob");
-            add(mob, EntitySpec.Flag.PERSISTENT, "Never despawn");
-            add(mob, EntitySpec.Flag.NO_AI, "No AI (statue)");
-            add(mob, EntitySpec.Flag.SILENT, "Silent");
-            add(mob, EntitySpec.Flag.GLOWING, "Glowing");
-            add(mob, EntitySpec.Flag.INVULNERABLE, "Invulnerable");
-            add(mob, EntitySpec.Flag.NO_GRAVITY, "No gravity");
-            add(mob, EntitySpec.Flag.PICKS_UP_LOOT, "Picks up items");
-            add(mob, EntitySpec.Flag.LEFT_HANDED, "Left-handed");
-        }
-
-        private void add(EntitySpec mob, EntitySpec.Flag f, String label) {
-            chips.add(body(Chip.of(label, 90, 14, () -> {
-                mob.flag(f, !mob.flag(f));
-                changed();
-            }).selected(() -> mob.flag(f)).tip(f.key)));
-        }
-
-        @Override
-        protected int layoutBody(int x, int y, int w) {
-            int cols = w >= 200 ? 2 : 1, cw = (w - (cols - 1) * 2) / cols;
-            for (int i = 0; i < chips.size(); i++) {
-                chips.get(i).setWidth(cw);
-                chips.get(i).setX(x + i % cols * (cw + 2));
-                chips.get(i).setY(y + i / cols * 16);
+            List<String> bits = new ArrayList<>();
+            if (!mob.effects().isEmpty()) {
+                bits.add(mob.effects().size() + (mob.effects().size() == 1 ? " effect" : " effects"));
             }
-            return (chips.size() + cols - 1) / cols * 16 - 2;
-        }
-    }
-
-    /** Health and common attributes; blank means the mob's default. */
-    private final class StatsCard extends Card {
-        private final List<EditBox> boxes = new ArrayList<>();
-        private final List<String> labels = new ArrayList<>();
-
-        StatsCard(EntitySpec mob) {
-            super("Stats", 0xFFFF6B6B, "Leave a box empty to keep the mob's normal value");
-            labels.add("Health");
-            boxes.add(body(numberBox(Float.isNaN(mob.health()) ? "" : trim(mob.health()), "Current health (set Max health too, to go above the default)", v -> {
-                mob.health(v == null ? Float.NaN : v.floatValue());
-                changed();
-            })));
-            for (String[] a : ATTRIBUTES) {
-                labels.add(a[1]);
-                double base = mob.attribute(a[0]);
-                boxes.add(body(numberBox(Double.isNaN(base) ? "" : trim(base), a[0], v -> {
-                    mob.attribute(a[0], v == null ? Double.NaN : v);
-                    changed();
-                })));
-            }
-        }
-
-        private static String trim(double d) {
-            return d == Math.rint(d) ? Long.toString((long) d) : Double.toString(d);
-        }
-
-        private EditBox numberBox(String value, String tip, java.util.function.Consumer<Double> onChange) {
-            EditBox box = new EditBox(font, 0, 0, 50, 14, Component.literal(tip));
-            box.setValue(value);
-            box.setHint(Component.literal("default"));
-            box.setTooltip(Tooltip.create(Component.literal(tip)));
-            box.setResponder(s -> {
-                if (s.isBlank()) {
-                    box.setTextColor(Theme.TEXT);
-                    onChange.accept(null);
-                    return;
+            for (EntitySpec.Flag f : EntitySpec.Flag.values()) {
+                if (mob.flag(f) && f != EntitySpec.Flag.NAME_VISIBLE) {
+                    bits.add(f.key);
                 }
-                try {
-                    double v = Double.parseDouble(s.strip());
-                    box.setTextColor(Theme.TEXT);
-                    onChange.accept(v);
-                } catch (NumberFormatException e) {
-                    box.setTextColor(Theme.BAD);
-                }
-            });
-            return box;
-        }
-
-        @Override
-        protected int layoutBody(int x, int y, int w) {
-            int cols = w >= 220 ? 2 : 1, cw = (w - (cols - 1) * 6) / cols;
-            for (int i = 0; i < boxes.size(); i++) {
-                boxes.get(i).setX(x + i % cols * (cw + 6) + cw - 50);
-                boxes.get(i).setY(y + i / cols * 16);
             }
-            return (boxes.size() + cols - 1) / cols * 16 - 2;
-        }
-
-        @Override
-        protected void extractBody(GuiGraphicsExtractor g, int x, int y, int w, int mouseX, int mouseY) {
-            int cols = w >= 220 ? 2 : 1, cw = (w - (cols - 1) * 6) / cols;
-            for (int i = 0; i < labels.size(); i++) {
-                g.text(font, labels.get(i), x + i % cols * (cw + 6), y + i / cols * 16 + 3, Theme.TEXT_DIM, false);
-            }
-        }
-    }
-
-    /** Status effects: effect, level, duration (blank = forever), particles. */
-    private final class EffectsCard extends Card {
-        private final List<SuggestBox> ids = new ArrayList<>();
-        private final List<EditBox> levels = new ArrayList<>(), durations = new ArrayList<>();
-        private final List<Chip> particles = new ArrayList<>(), removers = new ArrayList<>();
-        private final Chip add;
-
-        EffectsCard(EntitySpec mob) {
-            super("Effects", 0xFFC79BF2, "Status effects the mob spawns with. Leave the duration empty for forever.");
-            List<String> all = McRegistries.ids("minecraft:mob_effect", Delivery.registries());
-            List<EntitySpec.Effect> effects = new ArrayList<>(mob.effects());
-            for (int i = 0; i < effects.size(); i++) {
-                int index = i;
-                EntitySpec.Effect e = effects.get(i);
-                SuggestBox id = body(new SuggestBox(font, 100, 16, Component.literal("Effect"), () -> all));
-                id.setValueQuietly(Ids.brief(e.id()));
-                id.onAccept(s -> {
-                    String full = Ids.full(s);
-                    boolean ok = all.isEmpty() || all.contains(full);
-                    id.setTextColor(ok ? Theme.TEXT : Theme.WARN);
-                    if (ok) {
-                        update(mob, effects, index, new EntitySpec.Effect(full, effects.get(index).amplifier(), effects.get(index).duration(),
-                                effects.get(index).ambient(), effects.get(index).particles(), effects.get(index).icon()));
-                    }
-                });
-                ids.add(id);
-                EditBox level = body(new EditBox(font, 0, 0, 26, 16, Component.literal("Level")));
-                level.setValue(Integer.toString(e.amplifier() + 1));
-                level.setTooltip(Tooltip.create(Component.literal("Level (1 is the normal effect)")));
-                level.setResponder(t -> {
-                    try {
-                        int v = Integer.parseInt(t.strip());
-                        boolean ok = v >= 1 && v <= 128;
-                        level.setTextColor(ok ? Theme.TEXT : Theme.BAD);
-                        if (ok) {
-                            EntitySpec.Effect c = effects.get(index);
-                            update(mob, effects, index, new EntitySpec.Effect(c.id(), v - 1, c.duration(), c.ambient(), c.particles(), c.icon()));
-                        }
-                    } catch (NumberFormatException ex) {
-                        level.setTextColor(Theme.BAD);
-                    }
-                });
-                levels.add(level);
-                EditBox duration = body(new EditBox(font, 0, 0, 34, 16, Component.literal("Seconds")));
-                duration.setValue(e.duration() < 0 ? "" : NumberText.trim(e.duration() / 20.0));
-                duration.setHint(Component.literal("∞"));
-                duration.setTooltip(Tooltip.create(Component.literal("Duration in seconds; empty for forever")));
-                duration.setResponder(t -> {
-                    try {
-                        int ticks = t.isBlank() ? -1 : (int) Math.round(Double.parseDouble(t.strip()) * 20);
-                        duration.setTextColor(Theme.TEXT);
-                        EntitySpec.Effect c = effects.get(index);
-                        update(mob, effects, index, new EntitySpec.Effect(c.id(), c.amplifier(), ticks, c.ambient(), c.particles(), c.icon()));
-                    } catch (NumberFormatException ex) {
-                        duration.setTextColor(Theme.BAD);
-                    }
-                });
-                durations.add(duration);
-                particles.add(body(Chip.of("✦", 16, 16, () -> {
-                    EntitySpec.Effect c = effects.get(index);
-                    update(mob, effects, index, new EntitySpec.Effect(c.id(), c.amplifier(), c.duration(), c.ambient(), !c.particles(), c.icon()));
-                }).selected(() -> effects.get(index).particles()).tip("Show particles")));
-                removers.add(body(Chip.of("✕", 14, 16, () -> {
-                    effects.remove(index);
-                    mob.effects(effects);
-                    changed();
-                    rebuild();
-                }).color(Theme.BAD)));
-            }
-            add = body(Chip.of("+ Add effect", 80, 14, () -> {
-                effects.add(new EntitySpec.Effect("minecraft:speed", 0, -1, false, true, true));
-                mob.effects(effects);
-                changed();
-                rebuild();
-            }));
-        }
-
-        private void update(EntitySpec mob, List<EntitySpec.Effect> effects, int index, EntitySpec.Effect e) {
-            effects.set(index, e);
-            mob.effects(effects);
-            changed();
-        }
-
-        @Override
-        protected int layoutBody(int x, int y, int w) {
-            int cy = y;
-            for (int i = 0; i < ids.size(); i++) {
-                int idW = w - 26 - 34 - 16 - 14 - 8;
-                ids.get(i).setX(x);
-                ids.get(i).setY(cy);
-                ids.get(i).setWidth(Math.max(40, idW));
-                int rx = x + Math.max(40, idW) + 2;
-                levels.get(i).setX(rx);
-                levels.get(i).setY(cy);
-                durations.get(i).setX(rx + 28);
-                durations.get(i).setY(cy);
-                particles.get(i).setX(rx + 64);
-                particles.get(i).setY(cy);
-                removers.get(i).setX(x + w - 14);
-                removers.get(i).setY(cy);
-                cy += 18;
-            }
-            add.setX(x);
-            add.setY(cy);
-            return cy - y + 14;
-        }
-    }
-
-    /** Number formatting shared by the cards. */
-    private static final class NumberText {
-        static String trim(double d) {
-            return d == Math.rint(d) ? Long.toString((long) d) : Double.toString(d);
-        }
-    }
-
-    /** Every field of the mob as an outline: effects, passengers, anything not covered above. */
-    private final class DataCard extends Card {
-        private final CodeArea area;
-        private String error = "";
-
-        DataCard(EntitySpec mob) {
-            super("All data", 0xFF9AA5B1, "The mob's full data as an outline. Effects, passengers, mob-specific fields "
-                    + "(e.g. IsBaby, powered, Size): add them here.");
-            area = body(new CodeArea(Outline.write(mob.data()).stripTrailing(), 100).lines(3, 24)
-                    .placeholder("e.g. IsBaby: true"));
-            allData = area;
-            shownDataVersion = dataVersion;
-            area.onChange(text -> {
-                try {
-                    Nbt.Compound c = text.isBlank() ? new Nbt.Compound() : Outline.readCompound(text);
-                    mob.data().entries().clear();
-                    c.entries().forEach(e -> mob.data().put(e.getKey(), e.getValue()));
-                    error = "";
-                    area.errorLine(0);
-                    changed();
-                    shownDataVersion = dataVersion;
-                } catch (SnbtException e) {
-                    error = e.getMessage();
-                    area.errorLine(e.line);
-                }
-            });
-        }
-
-        @Override
-        protected int layoutBody(int x, int y, int w) {
-            area.setX(x);
-            area.setY(y);
-            area.setWidth(w);
-            return area.getHeight() + (error.isEmpty() ? 0 : 11);
-        }
-
-        @Override
-        protected void extractBody(GuiGraphicsExtractor g, int x, int y, int w, int mouseX, int mouseY) {
-            if (!error.isEmpty()) {
-                g.text(font, font.plainSubstrByWidth(error, w), x, y + area.getHeight() + 2, Theme.BAD, false);
+            String summary = bits.isEmpty() ? (ix == x ? "No gear or changes yet" : "") : String.join(", ", bits);
+            g.text(font, font.plainSubstrByWidth(summary, x + w - ix - 4), ix + (ix == x ? 0 : 4), y + 26, Theme.TEXT_DIM, false);
+            if (weight != null) {
+                g.text(font, "Weight", weight.getX() - font.width("Weight") - 4, y + 44, Theme.TEXT_DIM, false);
             }
         }
     }
