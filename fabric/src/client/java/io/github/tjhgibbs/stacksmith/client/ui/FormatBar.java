@@ -97,8 +97,15 @@ public final class FormatBar {
     /** Lays the bar out from (x, y) within width {@code w}; returns its height. */
     public int layout(int x, int y, int w) {
         int full = 16 * 9 + 5 + styles.size() * 12 + 5 + 34 + 12;
+        // Narrow: the swatches go in two rows of 8.
+        int perRow = w >= 16 * 9 ? 16 : 8;
         int cx = x, cy = y;
-        for (Swatch s : swatches) {
+        for (int i = 0; i < swatches.size(); i++) {
+            if (i > 0 && i % perRow == 0) {
+                cx = x;
+                cy += 10;
+            }
+            Swatch s = swatches.get(i);
             s.setX(cx);
             s.setY(cy + 2);
             cx += 9;

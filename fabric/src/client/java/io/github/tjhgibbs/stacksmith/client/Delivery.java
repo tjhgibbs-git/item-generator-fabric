@@ -86,6 +86,22 @@ public final class Delivery {
         return Component.translatable("stacksmith.msg.ran", root);
     }
 
+    /** Sends several commands in order, stopping at the first that can't be sent. */
+    public static Component runAll(java.util.List<String> commands) {
+        Component last = Component.empty();
+        for (String c : commands) {
+            last = run(c);
+            if (!isSent(last)) {
+                return last;
+            }
+        }
+        return last;
+    }
+
+    private static boolean isSent(Component msg) {
+        return msg.getContents() instanceof net.minecraft.network.chat.contents.TranslatableContents t && t.getKey().equals("stacksmith.msg.ran");
+    }
+
     public static Component copy(String text) {
         Minecraft.getInstance().keyboardHandler.setClipboard(text);
         return Component.translatable("stacksmith.msg.copied", text.length());

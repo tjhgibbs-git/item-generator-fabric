@@ -102,11 +102,11 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
     // ---- layout ------------------------------------------------------------------------------
 
     private int leftW() {
-        return Math.clamp(width * 24 / 100, 120, 170);
+        return Math.clamp(width * 24 / 100, 100, 170);
     }
 
     private int rightW() {
-        return Math.clamp(width * 26 / 100, 130, 200);
+        return Math.clamp(width * 26 / 100, 115, 200);
     }
 
     private int midX() {
@@ -526,7 +526,7 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
         label(g, "Add component", PAD + 1, TOP + 44);
         // Middle header.
         String head = Session.outlineView ? "Whole item as outline" : Ids.pretty(spec.id());
-        label(g, head, midX() + 1, TOP + 3);
+        label(g, font.plainSubstrByWidth(head, midW() - 86), midX() + 1, TOP + 3);
         // Right: preview.
         int rx = rightX(), rw = rightW();
         label(g, "Preview", rx + 1, TOP + 3);

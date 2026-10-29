@@ -29,9 +29,9 @@
   "stacksmith.tooltip.length_long": "Too long to type in chat (256). Get item has no limit; a command block takes up to 32500.",
   "stacksmith.tooltip.get_spawner": "A spawner item that places this spawner (needs op on servers).",
   "stacksmith.tooltip.get_command_block": "A command block that turns itself into this spawner as soon as you place it: always active, no redstone. Needs op and command blocks enabled.",
-  "stacksmith.tooltip.place": "Run /setblock on the block you're looking at.",
+  "stacksmith.tooltip.place": "Run /setblock where you look. Looking at a spawner replaces it; otherwise the spawner goes against the face you look at. This tab then saves to that block.",
   "stacksmith.tooltip.place_no_permission": "This server doesn't let you use /setblock.",
-  "stacksmith.tooltip.place_too_long": "Too long to send from chat (256). Use Get command block instead.",
+  "stacksmith.tooltip.place_too_long": "One piece of this spawner (a single name or text) is too long to send from chat. Use Get command block instead.",
   "stacksmith.tooltip.copy_setblock": "Copy /setblock ~ ~ ~ spawner{...} to the clipboard.",
   "stacksmith.tooltip.copy_summon": "Copy /summon of this mob to the clipboard.",
   "stacksmith.tooltip.import_held": "Edit %s",
@@ -56,5 +56,12 @@
   "stacksmith.tooltip.summon": "Run /summon where you stand.",
   "stacksmith.tooltip.summon_no_permission": "This server doesn't let you use /summon. The spawn egg still works in creative.",
   "stacksmith.tooltip.summon_too_long": "Too long to send from chat (256). Use the spawn egg, or paste /summon into a command block.",
-  "stacksmith.tooltip.to_spawner": "Start a spawner with this mob (opens the Spawner tab)."
+  "stacksmith.tooltip.to_spawner": "Start a spawner with this mob (opens the Spawner tab).",
+  "stacksmith.button.save_spawner": "Save to this spawner",
+  "stacksmith.tooltip.save_spawner": "Overwrite the spawner at %s with these settings (/setblock).",
+  "stacksmith.button.load_looked_at": "Edit spawner I'm looking at",
+  "stacksmith.tooltip.load_looked_at": "Load the spawner under your crosshair; saving then overwrites it. Tip: pressing J while looking at a spawner does this too.",
+  "stacksmith.tooltip.load_looked_at_none": "Look at a spawner first (close this screen, aim, press J).",
+  "stacksmith.msg.saved_spawner": "Saved to the spawner at %s",
+  "stacksmith.button.load_looked_at_short": "Looked-at"
 }

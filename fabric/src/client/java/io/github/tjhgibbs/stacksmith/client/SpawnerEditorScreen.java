@@ -24,6 +24,7 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.resources.language.I18n;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -32,7 +33,6 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -45,8 +45,11 @@ import java.util.Map;
  * Edit mob… opening the full mob editor) and the spawner's settings in plain units in the
  * middle, and a live preview with the outputs on the right.
  *
- * <p>Outputs: a spawner item, a command block that turns itself into the spawner when placed
- * (always active, no redstone), a /setblock where you look, or the command to copy.
+ * <p>Usually tied to a spawner in the world (J while looking at one, or after placing one):
+ * then the main button saves back to that block. Otherwise it places where you look,
+ * replacing a spawner there. Data too long for one chat command is sent in steps (see
+ * {@link Commands#setSpawnerInSteps}). Other outputs: a spawner item, a command block that
+ * turns itself into the spawner when placed (always active, no redstone), or the command to copy.
  */
 public final class SpawnerEditorScreen extends StacksmithScreen {
     private static final int TOP = 24, FOOTER = 26;
@@ -114,6 +117,21 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         SuggestBox.closeAll();
         header(Tab.SPAWNER, "Look at a spawner, or paste a /setblock, /summon or spawner /give",
                 () -> minecraft.setScreenAndShow(new ImportScreen(this, null)));
+        BlockPos looked = WorldSpawner.lookedAtSpawner();
+        // The short label when the full one would run into the title.
+        String loadLabel = I18n.get("stacksmith.button.load_looked_at");
+        if (width - PAD - 64 - font.width(loadLabel) - 16 < (width + font.width(title)) / 2 + 4) {
+            loadLabel = I18n.get("stacksmith.button.load_looked_at_short");
+        }
+        int lw = font.width(loadLabel) + 16;
+        Chip load = addRenderableWidget(Chip.of(loadLabel, lw, 14,
+                () -> WorldSpawner.load(looked, () -> minecraft.setScreenAndShow(new SpawnerEditorScreen(parent))))
+                .at(width - PAD - 60 - 4 - lw, 5)
+                .tip(I18n.get(looked != null ? "stacksmith.tooltip.load_looked_at" : "stacksmith.tooltip.load_looked_at_none")));
+        load.active = looked != null && !looked.equals(Session.spawnerPos);
+        if (Session.spawnerPos != null && !WorldSpawner.exists(Session.spawnerPos)) {
+            Session.spawnerPos = null; // broken or out of reach: placing makes a new one
+        }
         buildLeft();
         buildMiddle();
         buildRight();
@@ -152,12 +170,12 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
             remove.active = pool;
             left.add(new PairRow(pick, remove));
         }
-        left.add(new ItemEditorScreen.WidgetRow(Chip.of("+ Add mob", 80, 16, () -> {
-            spawner.entries().add(new SpawnerSpec.Entry(Session.mob.copy(), 1));
-            Session.spawnerEntry = spawner.entries().size() - 1;
-            changed();
-            rebuild();
-        }).tip("Adds the mob from the Mob tab. With several mobs the spawner picks one each time, by weight."), 18));
+        left.add(new ItemEditorScreen.WidgetRow(Chip.of("+ Add mob", 80, 16, () ->
+                minecraft.setScreenAndShow(new MobEditorScreen(this, new EntitySpec("zombie"), result -> {
+                    spawner.entries().add(new SpawnerSpec.Entry(result, 1));
+                    Session.spawnerEntry = spawner.entries().size() - 1;
+                    changed();
+                }))).tip("Pick and set up another mob. With several mobs the spawner picks one each time, by weight."), 18));
         addPaneWidgets(left);
         left.layout();
         left.scroll(leftScroll);
@@ -190,11 +208,11 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     private void buildRight() {
         int x = rightX(), w = rightW();
         int y = bodyBottom() - 4 * 22 + 2;
+        placeHere = addRenderableWidget(Button.builder(Component.translatable(Session.spawnerPos != null
+                ? "stacksmith.button.save_spawner" : "stacksmith.button.place"), b -> placeHere()).bounds(x, y, w, 20).build());
         getSpawner = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.get_spawner"), b -> giveSpawner())
-                .bounds(x, y, w, 20).build());
-        getCommandBlock = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.get_command_block"), b -> giveCommandBlock())
                 .bounds(x, y + 22, w, 20).build());
-        placeHere = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.place"), b -> placeHere())
+        getCommandBlock = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.get_command_block"), b -> giveCommandBlock())
                 .bounds(x, y + 44, w, 20).build());
         copySetblock = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.copy_setblock"), b ->
                 toast(Delivery.copy("/" + command), true)).bounds(x, y + 66, w, 20).build());
@@ -241,15 +259,42 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         toast(r.ok() ? Delivery.giveCreative(r.stack()) : Component.literal(r.error()), r.ok());
     }
 
+    /** Saves to the linked spawner, or places one where you look (replacing a spawner there) and links it. */
     private void placeHere() {
-        if (!(minecraft.hitResult instanceof BlockHitResult hit) || hit.getType() != HitResult.Type.BLOCK) {
-            toast(Component.translatable("stacksmith.msg.look_at_block"), false);
+        BlockPos p = Session.spawnerPos;
+        if (p == null) {
+            BlockHitResult hit = WorldSpawner.lookedAt();
+            if (hit == null) {
+                toast(Component.translatable("stacksmith.msg.look_at_block"), false);
+                return;
+            }
+            p = WorldSpawner.lookedAtSpawner() != null ? hit.getBlockPos() : hit.getBlockPos().relative(hit.getDirection());
+        }
+        List<String> steps = Commands.setSpawnerInSteps(spawner, at(p), style(), Commands.CHAT_LIMIT);
+        if (steps == null) {
+            toast(Component.translatable("stacksmith.tooltip.place_too_long"), false);
             return;
         }
-        BlockPos p = hit.getBlockPos().relative(hit.getDirection());
-        String cmd = Commands.setSpawner(spawner, p.getX() + " " + p.getY() + " " + p.getZ(), style());
-        Component msg = Delivery.run(cmd);
-        toast(msg, cmd.length() + 1 <= Commands.CHAT_LIMIT && Delivery.canUse("setblock"));
+        boolean ok = canPlace(steps);
+        Component msg = Delivery.runAll(steps);
+        if (ok) {
+            boolean saved = Session.spawnerPos != null;
+            Session.spawnerPos = p.immutable();
+            msg = saved ? Component.translatable("stacksmith.msg.saved_spawner", at(p)) : msg;
+            if (!saved) {
+                rebuild(); // the button now saves to this block
+            }
+        }
+        toast(msg, ok);
+    }
+
+    /** Allowed to run these: setblock, and data when it is built in steps. */
+    private static boolean canPlace(List<String> steps) {
+        return steps != null && Delivery.canUse("setblock") && (steps.size() == 1 || Delivery.canUse("data"));
+    }
+
+    private static String at(BlockPos p) {
+        return p.getX() + " " + p.getY() + " " + p.getZ();
     }
 
     // ---- update ----------------------------------------------------------------------------------
@@ -288,12 +333,16 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         boolean valid = spawner.problems().isEmpty();
         getSpawner.active = creative && valid;
         getCommandBlock.active = creative && valid && command.length() <= Commands.COMMAND_BLOCK_LIMIT;
-        placeHere.active = valid && op && command.length() + 20 <= Commands.CHAT_LIMIT;
+        // A sample position as long as real ones get, to see whether it needs steps or can't be sent.
+        List<String> steps = Commands.setSpawnerInSteps(spawner, "-30000000 -64 -30000000", style(), Commands.CHAT_LIMIT);
+        placeHere.active = valid && canPlace(steps);
         copySetblock.active = valid;
         getSpawner.setTooltip(Tooltip.create(Component.translatable(creative ? "stacksmith.tooltip.get_spawner" : "stacksmith.tooltip.get_creative")));
         getCommandBlock.setTooltip(Tooltip.create(Component.translatable(creative ? "stacksmith.tooltip.get_command_block" : "stacksmith.tooltip.get_creative")));
-        placeHere.setTooltip(Tooltip.create(Component.translatable(!op ? "stacksmith.tooltip.place_no_permission"
-                : command.length() + 20 > Commands.CHAT_LIMIT ? "stacksmith.tooltip.place_too_long" : "stacksmith.tooltip.place")));
+        placeHere.setTooltip(Tooltip.create(!op ? Component.translatable("stacksmith.tooltip.place_no_permission")
+                : steps == null ? Component.translatable("stacksmith.tooltip.place_too_long")
+                : Session.spawnerPos != null ? Component.translatable("stacksmith.tooltip.save_spawner", at(Session.spawnerPos))
+                : Component.translatable("stacksmith.tooltip.place")));
         copySetblock.setTooltip(Tooltip.create(Component.translatable("stacksmith.tooltip.copy_setblock")));
     }
 
@@ -307,7 +356,7 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         panel(g, midX() - 2, top, midW() + 4, bottom - top);
         panel(g, rightX() - 2, top, rightW() + 4, bottom - top);
         label(g, spawner.entries().size() > 1 ? "Spawns (picks one)" : "Spawns", PAD + 1, TOP + 2);
-        label(g, "Spawner", midX() + 1, TOP + 2);
+        label(g, Session.spawnerPos != null ? "Spawner at " + at(Session.spawnerPos) : "New spawner", midX() + 1, TOP + 2);
         int rx = rightX(), rw = rightW();
         label(g, "Preview", rx + 1, TOP + 2);
         int py = TOP + 14, ph = bodyBottom() - 4 * 22 - py - 26;
@@ -449,7 +498,7 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
 
     /** The selected mob at a glance, with Edit mob… and (in a pool) its weight. */
     private final class SelectedMobCard extends Card {
-        private final Chip edit, fromTab;
+        private final Chip edit;
         private final EditBox weight;
 
         SelectedMobCard() {
@@ -459,11 +508,6 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                 entry().entity = result;
                 changed();
             }))).tip("Type, name, gear, behaviour, stats, effects"));
-            fromTab = body(Chip.of("From Mob tab", 70, 16, () -> {
-                entry().entity = Session.mob.copy();
-                changed();
-                rebuild();
-            }).tip("Replace this mob with the one in the Mob tab: " + mobLabel(Session.mob)));
             if (spawner.entries().size() > 1) {
                 weight = body(new EditBox(font, 0, 0, 30, 14, Component.literal("Weight")));
                 weight.setValue(Integer.toString(entry().weight));
@@ -489,8 +533,6 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         protected int layoutBody(int x, int y, int w) {
             edit.setX(x);
             edit.setY(y + 40);
-            fromTab.setX(x + 72);
-            fromTab.setY(y + 40);
             if (weight != null) {
                 weight.setX(x + w - 30);
                 weight.setY(y + 41);

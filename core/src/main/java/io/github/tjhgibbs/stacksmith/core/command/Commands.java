@@ -48,6 +48,84 @@ public final class Commands {
         return setblock(pos, SpawnerSpec.BLOCK_ID, spawner.toTag(), "replace", style);
     }
 
+    /** Command storage used to build data too long for one chat command. */
+    public static final String STORAGE = "stacksmith:tmp";
+
+    /**
+     * Commands that put this spawner at {@code pos}, each short enough to send from chat
+     * ({@code limit}). One {@code setblock} when it fits; otherwise the data is built in
+     * command storage piece by piece, a fresh spawner is placed (so nothing of the old one
+     * is left), and the data is copied onto it in one go. Null if a single string in the
+     * data is too long to send at all.
+     */
+    public static java.util.List<String> setSpawnerInSteps(SpawnerSpec spawner, String pos, Style style, int limit) {
+        String one = setSpawner(spawner, pos, style);
+        if (one.length() + 1 <= limit) {
+            return java.util.List.of(one);
+        }
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (!writeStorage(STORAGE, "s", spawner.toTag(), limit - 1, out)) {
+            return null;
+        }
+        String block = style.brief() ? Ids.brief(SpawnerSpec.BLOCK_ID) : SpawnerSpec.BLOCK_ID;
+        out.add("setblock " + pos + " air");
+        out.add("setblock " + pos + " " + block);
+        out.add("data modify block " + pos + " {} merge from storage " + STORAGE + " s");
+        out.add("data remove storage " + STORAGE + " s");
+        return out;
+    }
+
+    /**
+     * Appends commands that set {@code path} in command storage {@code storage} to {@code value},
+     * each at most {@code limit} characters: whole values where they fit, otherwise an empty
+     * compound or list filled in key by key / element by element. False if a leaf is too long.
+     */
+    public static boolean writeStorage(String storage, String path, Nbt value, int limit, java.util.List<String> out) {
+        String target = "data modify storage " + storage + " " + path;
+        String whole = target + " set value " + Snbt.write(value);
+        if (whole.length() <= limit) {
+            out.add(whole);
+            return true;
+        }
+        switch (value) {
+            case Nbt.Compound c -> {
+                out.add(target + " set value {}");
+                for (var e : c.entries()) {
+                    if (!writeStorage(storage, path + "." + pathKey(e.getKey()), e.getValue(), limit, out)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            case Nbt.List l -> {
+                out.add(target + " set value []");
+                for (int i = 0; i < l.size(); i++) {
+                    Nbt item = l.get(i);
+                    String append = target + " append value " + Snbt.write(item);
+                    if (append.length() <= limit) {
+                        out.add(append);
+                    } else if (item instanceof Nbt.Compound || item instanceof Nbt.List) {
+                        out.add(target + " append value " + (item instanceof Nbt.Compound ? "{}" : "[]"));
+                        if (!writeStorage(storage, path + "[" + i + "]", item, limit, out)) {
+                            return false;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            default -> {
+                return false;
+            }
+        }
+    }
+
+    /** A key in an NBT path, quoted when it has characters a path can't take bare. */
+    static String pathKey(String k) {
+        return k.matches("[A-Za-z0-9_\\-+:]+") ? k : Snbt.quote(k);
+    }
+
     /** {@code summon zombie ~ ~ ~ {...}} */
     public static String summon(EntitySpec entity, String pos, Style style) {
         StringBuilder sb = new StringBuilder("summon ").append(style.brief() ? Ids.brief(entity.id()) : entity.id()).append(' ').append(pos);

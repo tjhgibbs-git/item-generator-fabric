@@ -85,4 +85,74 @@ class CommandsTest {
         assertArrayEquals(new int[]{0, 7}, back.entries().getFirst().blockLight);
         assertEquals(s.toTag(), back.toTag());
     }
+
+    @Test
+    void shortSpawnerIsOneSetblock() {
+        java.util.List<String> steps = Commands.setSpawnerInSteps(zombieSpawner(), "1 2 3", Commands.Style.DEFAULT, 10_000);
+        assertEquals(java.util.List.of(Commands.setSpawner(zombieSpawner(), "1 2 3", Commands.Style.DEFAULT)), steps);
+    }
+
+    @Test
+    void longSpawnerIsBuiltInStepsThatEachFitChat() throws SnbtException {
+        SpawnerSpec s = zombieSpawner();
+        for (String id : new String[]{"skeleton", "creeper", "spider", "witch"}) {
+            EntitySpec e = new EntitySpec(id);
+            e.data().put("CustomName", Nbt.compound().put("text", "A rather long name for a " + id).put("color", "red"));
+            s.entries().add(new SpawnerSpec.Entry(e, 2));
+        }
+        java.util.List<String> steps = Commands.setSpawnerInSteps(s, "10 64 -5", Commands.Style.DEFAULT, Commands.CHAT_LIMIT);
+        assertNotNull(steps);
+        assertTrue(steps.size() > 4, steps.toString());
+        for (String c : steps) {
+            assertTrue(c.length() + 1 <= Commands.CHAT_LIMIT, c);
+        }
+        assertEquals("setblock 10 64 -5 air", steps.get(steps.size() - 4));
+        assertEquals("setblock 10 64 -5 spawner", steps.get(steps.size() - 3));
+        assertEquals("data modify block 10 64 -5 {} merge from storage stacksmith:tmp s", steps.get(steps.size() - 2));
+        // Replaying the storage writes gives back the whole spawner.
+        Nbt.Compound storage = new Nbt.Compound();
+        for (String c : steps.subList(0, steps.size() - 4)) {
+            replay(storage, c);
+        }
+        assertEquals(s.toTag(), storage.get("s"));
+    }
+
+    @Test
+    void oversizedLeafCannotBeSplit() {
+        EntitySpec e = new EntitySpec("zombie");
+        e.data().put("CustomName", new Nbt.Str("x".repeat(400)));
+        assertNull(Commands.setSpawnerInSteps(new SpawnerSpec(e), "~ ~ ~", Commands.Style.DEFAULT, Commands.CHAT_LIMIT));
+    }
+
+    @Test
+    void pathKeysWithDotsAreQuoted() {
+        assertEquals("minecraft:custom_name", Commands.pathKey("minecraft:custom_name"));
+        assertEquals("\"a.b\"", Commands.pathKey("a.b"));
+    }
+
+    /** A tiny interpreter for the {@code data modify storage} lines Commands writes. */
+    private static void replay(Nbt.Compound root, String cmd) throws SnbtException {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("data modify storage stacksmith:tmp (\\S+) (set|append) value (.*)").matcher(cmd);
+        assertTrue(m.matches(), cmd);
+        java.util.List<Object> path = new java.util.ArrayList<>();
+        java.util.regex.Matcher p = java.util.regex.Pattern.compile("([A-Za-z0-9_\\-+:]+)|\\[(\\d+)]").matcher(m.group(1));
+        while (p.find()) {
+            path.add(p.group(1) != null ? p.group(1) : (Object) Integer.parseInt(p.group(2)));
+        }
+        Nbt parent = root;
+        for (Object k : path.subList(0, path.size() - 1)) {
+            parent = k instanceof Integer i ? ((Nbt.List) parent).get(i) : ((Nbt.Compound) parent).get((String) k);
+        }
+        Object last = path.getLast();
+        Nbt value = io.github.tjhgibbs.stacksmith.core.nbt.Snbt.parse(m.group(3));
+        if (m.group(2).equals("append")) {
+            Nbt list = last instanceof Integer i ? ((Nbt.List) parent).get(i) : ((Nbt.Compound) parent).get((String) last);
+            ((Nbt.List) list).add(value);
+        } else if (last instanceof Integer i) {
+            ((Nbt.List) parent).set(i, value);
+        } else {
+            ((Nbt.Compound) parent).put((String) last, value);
+        }
+    }
 }

@@ -211,4 +211,44 @@ public class BridgeGameTests {
         }
         h.succeed();
     }
+
+    /** A spawner too long for one chat command, saved in steps over an existing one, reads back whole. */
+    @GameTest(structure = EMPTY_64, maxTicks = 20)
+    public void spawnerSavedInStepsReplacesTheOldOne(GameTestHelper h) {
+        HolderLookup.Provider reg = h.getLevel().registryAccess();
+        BlockPos pos = h.absolutePos(new BlockPos(5, 2, 5));
+        String at = pos.getX() + " " + pos.getY() + " " + pos.getZ();
+        var server = h.getLevel().getServer();
+        var source = server.createCommandSourceStack().withSuppressedOutput();
+        // The old spawner has a named, glowing skeleton that must not survive.
+        server.getCommands().performPrefixedCommand(source,
+                "setblock " + at + " spawner{SpawnData:{entity:{id:\"minecraft:skeleton\",CustomName:\"Old\",Glowing:1b}},SpawnRange:9s}");
+        SpawnerSpec spawner = new SpawnerSpec(zombie());
+        for (String id : new String[]{"creeper", "spider", "witch"}) {
+            EntitySpec e = new EntitySpec(id);
+            e.data().put("CustomName", TextMarkup.toComponent("&cA rather long name for the " + id, true));
+            spawner.entries().add(new SpawnerSpec.Entry(e, 2));
+        }
+        List<String> steps = Commands.setSpawnerInSteps(spawner, at, Commands.Style.DEFAULT, Commands.CHAT_LIMIT);
+        if (steps == null || steps.size() < 2) {
+            h.fail("expected several steps, got " + steps);
+            return;
+        }
+        for (String c : steps) {
+            if (c.length() + 1 > Commands.CHAT_LIMIT) {
+                h.fail("step too long for chat: " + c);
+                return;
+            }
+            server.getCommands().performPrefixedCommand(source, c);
+        }
+        Nbt.Compound saved = McNbt.fromGame(h.getLevel().getBlockEntity(pos).saveWithoutMetadata(reg));
+        SpawnerSpec back = SpawnerSpec.fromTag(saved);
+        String old = Snbt.write(saved);
+        if (back.entries().size() != 4 || back.get(SpawnerSpec.Setting.SPAWN_RANGE) != spawner.get(SpawnerSpec.Setting.SPAWN_RANGE)
+                || old.contains("Glowing") || old.contains("\"Old\"") || !back.primary().id().equals("minecraft:zombie")) {
+            h.fail("spawner saved in steps read back differently:\n  " + old);
+            return;
+        }
+        h.succeed();
+    }
 }

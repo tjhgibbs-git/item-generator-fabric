@@ -3,6 +3,7 @@ package io.github.tjhgibbs.stacksmith.client;
 import io.github.tjhgibbs.stacksmith.core.entity.EntitySpec;
 import io.github.tjhgibbs.stacksmith.core.entity.SpawnerSpec;
 import io.github.tjhgibbs.stacksmith.core.item.ItemSpec;
+import net.minecraft.core.BlockPos;
 
 /** What was being edited, kept while the game runs so closing a screen loses nothing. */
 public final class Session {
@@ -10,6 +11,8 @@ public final class Session {
     public static EntitySpec mob = new EntitySpec("zombie");
     public static SpawnerSpec spawner = new SpawnerSpec(new EntitySpec("zombie"));
     public static int spawnerEntry;
+    /** The spawner block the Spawner tab saves back to, or null when it isn't tied to one. */
+    public static BlockPos spawnerPos;
     /** Form cards (false) or the whole item as one outline (true). */
     public static boolean outlineView;
     public static boolean briefCommands = true;

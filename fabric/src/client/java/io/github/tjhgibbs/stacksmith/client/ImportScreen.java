@@ -5,21 +5,16 @@ import io.github.tjhgibbs.stacksmith.client.ui.Theme;
 import io.github.tjhgibbs.stacksmith.core.command.Importer;
 import io.github.tjhgibbs.stacksmith.core.entity.SpawnerSpec;
 import io.github.tjhgibbs.stacksmith.core.item.ItemSpec;
-import io.github.tjhgibbs.stacksmith.core.nbt.Nbt;
 import io.github.tjhgibbs.stacksmith.core.nbt.SnbtException;
 import io.github.tjhgibbs.stacksmith.mod.McItems;
-import io.github.tjhgibbs.stacksmith.mod.McNbt;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
 
 import java.util.function.Consumer;
 
@@ -86,10 +81,7 @@ public final class ImportScreen extends StacksmithScreen {
     }
 
     private BlockEntity lookedAtBlockEntity() {
-        if (minecraft.level == null || !(minecraft.hitResult instanceof BlockHitResult hit) || hit.getType() != HitResult.Type.BLOCK) {
-            return null;
-        }
-        return minecraft.level.getBlockEntity(hit.getBlockPos());
+        return WorldSpawner.lookedAtBlockEntity();
     }
 
     private void importLookedAt() {
@@ -97,23 +89,15 @@ public final class ImportScreen extends StacksmithScreen {
         if (be == null || Delivery.registries() == null) {
             return;
         }
-        BlockPos pos = be.getBlockPos();
-        // The client's copy has what the server shares for rendering; ops can ask for the rest.
-        Nbt.Compound local = McNbt.fromGame(be.saveWithoutMetadata(Delivery.registries()));
-        if (Delivery.canUse("data") && minecraft.getConnection() != null) {
-            minecraft.getConnection().getDebugQueryHandler().queryBlockEntityTag(pos, tag -> minecraft.execute(() ->
-                    routeBlock(be, tag != null ? McNbt.fromGame(tag) : local)));
-        } else {
-            routeBlock(be, local);
-        }
-    }
-
-    private void routeBlock(BlockEntity be, Nbt.Compound data) {
-        if (data.has("SpawnData") || data.has("SpawnPotentials")) {
-            route(new Importer.SpawnerResult(SpawnerSpec.fromTag(data), null));
-        } else {
-            error = "Only spawners can be imported from blocks so far.";
-        }
+        WorldSpawner.read(be, data -> {
+            if (data.has("SpawnData") || data.has("SpawnPotentials")) {
+                // Linked to the block, so the spawner tab saves back to it.
+                WorldSpawner.link(SpawnerSpec.fromTag(data), be.getBlockPos());
+                minecraft.setScreenAndShow(new SpawnerEditorScreen(rootParent()));
+            } else {
+                error = "Only spawners can be imported from blocks so far.";
+            }
+        });
     }
 
     private void importText() {
@@ -137,8 +121,7 @@ public final class ImportScreen extends StacksmithScreen {
                 }
             }
             case Importer.SpawnerResult r -> {
-                Session.spawner = r.spawner();
-                Session.spawnerEntry = 0;
+                WorldSpawner.link(r.spawner(), null);
                 minecraft.setScreenAndShow(new SpawnerEditorScreen(rootParent()));
             }
             case Importer.EntityResult r -> {
