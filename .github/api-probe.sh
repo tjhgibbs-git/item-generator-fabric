@@ -4,6 +4,7 @@
 # Each line of the list file is one of:
 #   net.minecraft.Foo            javap -public of that class
 #   grep:some/path/Part          class names in the jars containing that text
+#   protected:net.minecraft.Foo  javap -protected (for classes meant to be subclassed)
 set -u
 jars=$(find ~/.gradle/caches -name '*.jar' \( -path '*minecraft*' -o -path '*fabric-api*' -o -path '*net.fabricmc*' \) 2>/dev/null | grep -v sources | sort -u)
 cp=$(echo "$jars" | tr '\n' ':')
@@ -14,6 +15,9 @@ while IFS= read -r line; do
     pat=${line#grep:}
     echo "==== classes matching $pat"
     for j in $jars; do unzip -Z1 "$j" 2>/dev/null | grep -F "$pat" | grep '\.class$' | grep -v '\$[0-9]' ; done | sort -u | head -300
+  elif [[ "$line" == protected:* ]]; then
+    echo "==== ${line#protected:} (protected)"
+    javap -protected -cp "$cp" "${line#protected:}" 2>&1 | head -400
   else
     echo "==== $line"
     javap -public -cp "$cp" "$line" 2>&1 | head -400
