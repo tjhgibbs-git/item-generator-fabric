@@ -68,7 +68,21 @@ public final class MobEditorScreen extends StacksmithScreen {
     private static final String[][] ATTRIBUTES = {
             {"minecraft:max_health", "Max health"}, {"minecraft:movement_speed", "Speed"}, {"minecraft:attack_damage", "Attack damage"},
             {"minecraft:armor", "Armour"}, {"minecraft:knockback_resistance", "Knockback resist."}, {"minecraft:follow_range", "Follow range"},
-            {"minecraft:scale", "Scale"}};
+            {"minecraft:scale", "Size (scale)"}, {"minecraft:attack_knockback", "Attack knockback"}, {"minecraft:armor_toughness", "Armour toughness"},
+            {"minecraft:step_height", "Step height"}, {"minecraft:jump_strength", "Jump strength"}, {"minecraft:gravity", "Gravity"},
+            {"minecraft:spawn_reinforcements", "Reinforcements"}};
+    /** Hints for the attribute boxes (default and range). */
+    private static final Map<String, String> ATTRIBUTE_HELP = Map.ofEntries(
+            Map.entry("minecraft:scale", "Size: 1 is normal, 0.0625 to 16. Hitbox and reach scale with it."),
+            Map.entry("minecraft:movement_speed", "Zombie 0.23, player walking 0.1"),
+            Map.entry("minecraft:attack_damage", "Damage per hit, in half hearts"),
+            Map.entry("minecraft:follow_range", "How far away it notices and chases you, in blocks"),
+            Map.entry("minecraft:knockback_resistance", "0 to 1; 1 means no knockback"),
+            Map.entry("minecraft:attack_knockback", "Extra knockback on hit (0 to 5)"),
+            Map.entry("minecraft:step_height", "Blocks it walks up without jumping (0.6 normal)"),
+            Map.entry("minecraft:gravity", "0.08 normal; lower floats, 0 hovers"),
+            Map.entry("minecraft:jump_strength", "Jump height (0.42 normal)"),
+            Map.entry("minecraft:spawn_reinforcements", "Zombies: chance (0 to 1) to call more zombies when hit"));
     private static double listScroll, midScroll;
     private static String search = "";
     private static final Map<String, ItemStack> EGGS = new HashMap<>();
@@ -782,11 +796,33 @@ public final class MobEditorScreen extends StacksmithScreen {
             for (String[] a : ATTRIBUTES) {
                 labels.add(a[1]);
                 double base = mob.attribute(a[0]);
-                boxes.add(body(numberBox(Double.isNaN(base) ? "" : trim(base), a[0], v -> {
+                boxes.add(body(numberBox(Double.isNaN(base) ? "" : trim(base), ATTRIBUTE_HELP.getOrDefault(a[0], a[0]), v -> {
                     mob.attribute(a[0], v == null ? Double.NaN : v);
                     changed();
                 })));
             }
+            // Melee reach comes from the main-hand weapon's attack_range component.
+            labels.add("Reach");
+            ItemSpec weapon = mob.equipment(EntitySpec.Slot.MAINHAND);
+            double reach = weapon != null && weapon.get("attack_range") instanceof Nbt.Compound r ? r.getDouble("max_reach", Double.NaN) : Double.NaN;
+            EditBox reachBox = body(numberBox(Double.isNaN(reach) ? "" : trim(reach),
+                    weapon == null ? "Give it a main-hand weapon first: reach is set on the weapon (attack_range)"
+                            : "Melee reach in blocks (about 2 to 3 normally). Sets attack_range on its main-hand weapon.", v -> {
+                ItemSpec w = mob.equipment(EntitySpec.Slot.MAINHAND);
+                if (w == null) {
+                    return;
+                }
+                if (v == null) {
+                    w.unset("attack_range");
+                } else {
+                    w.set("attack_range", new Nbt.Compound().put("max_reach", Nbt.f(v)).put("mob_factor", Nbt.f(1)));
+                }
+                mob.equipment(EntitySpec.Slot.MAINHAND, w);
+                changed();
+            }));
+            reachBox.active = weapon != null;
+            reachBox.setEditable(weapon != null);
+            boxes.add(reachBox);
         }
 
         private static String trim(double d) {

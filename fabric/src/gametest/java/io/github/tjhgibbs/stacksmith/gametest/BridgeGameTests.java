@@ -314,4 +314,31 @@ public class BridgeGameTests {
             }
         };
     }
+
+    /** A weapon's attack_range (with mob_factor) reaches further for the mob holding it: the editor's Reach. */
+    @GameTest(structure = EMPTY_64, maxTicks = 20)
+    public void attackRangeGivesMobsReach(GameTestHelper h) {
+        EntitySpec far = new EntitySpec("zombie");
+        far.equipment(EntitySpec.Slot.MAINHAND, new ItemSpec("iron_sword").set("attack_range",
+                Nbt.compound().put("max_reach", Nbt.f(6)).put("mob_factor", Nbt.f(1))));
+        EntitySpec plain = new EntitySpec("zombie");
+        plain.equipment(EntitySpec.Slot.MAINHAND, new ItemSpec("iron_sword"));
+        Mob reach = (Mob) McEntities.create(far, h.getLevel());
+        Mob normal = (Mob) McEntities.create(plain, h.getLevel());
+        Mob target = (Mob) McEntities.create(new EntitySpec("pig"), h.getLevel());
+        if (reach == null || normal == null || target == null) {
+            h.fail("couldn't build the mobs");
+            return;
+        }
+        BlockPos p = h.absolutePos(new BlockPos(5, 2, 5));
+        reach.setPos(p.getX() + 0.5, p.getY(), p.getZ() + 0.5);
+        normal.setPos(p.getX() + 0.5, p.getY(), p.getZ() + 0.5);
+        target.setPos(p.getX() + 5.0, p.getY(), p.getZ() + 0.5);
+        boolean a = reach.isWithinMeleeAttackRange(target), b = normal.isWithinMeleeAttackRange(target);
+        if (!a || b) {
+            h.fail("4.5 blocks away: with attack_range " + a + " (want true), without " + b + " (want false)");
+            return;
+        }
+        h.succeed();
+    }
 }
