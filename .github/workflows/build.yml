@@ -1,0 +1,39 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core:
+    # Pure-Java model, codecs and command builders: fast, no Minecraft download.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Core tests
+        run: ./gradlew :core:test -PcoreOnly --stacktrace
+
+  mod:
+    # Full mod: compiles against Minecraft 26.3 and runs the server GameTests.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+      - name: Build mod and run GameTests
+        run: ./gradlew build --stacktrace
+      - name: API probe (javap of the classes in .github/api-probe.txt)
+        # Lets environments without Mojang/Fabric access see 26.x signatures in the job log.
+        if: always() && hashFiles('.github/api-probe.txt') != ''
+        run: .github/api-probe.sh .github/api-probe.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stacksmith-mod
+          path: fabric/build/libs/*.jar

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "stacksmith",
+  "version": "${version}",
+  "name": "Stacksmith",
+  "description": "An in-game item, mob and spawner editor: everything MCStacker does, as a GUI. Edit components in a readable outline instead of SNBT, import items you already have, and get them as a creative-inventory item, a /give, a /setblock or a self-running command block.",
+  "authors": ["tjhgibbs"],
+  "environment": "*",
+  "entrypoints": {
+    "main": ["io.github.tjhgibbs.stacksmith.mod.StacksmithMod"],
+    "client": ["io.github.tjhgibbs.stacksmith.client.StacksmithClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "minecraft": "~26.3",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}

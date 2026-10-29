@@ -1,0 +1,10 @@
+build/
+.gradle/
+run/
+out/
+*.iml
+.idea/
+.vscode/
+previews/
+.block-scraper/
+shots/
