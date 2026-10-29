@@ -49,6 +49,18 @@ processResources {
 	}
 }
 
+// Server GameTests (src/gametest): check core's assumptions (save formats, schema defaults,
+// SNBT) against the real game. Copied from Sylvan, where this block runs on 26.3.
+fabricApi {
+	configureTests {
+		createSourceSet = true
+		modId = 'stacksmith-gametest'
+		enableGameTests = true
+		enableClientGameTests = false
+		eula = true
+	}
+}
+
 // Dev-only: drive a client from the block-scraper CLI to look at the GUI (see settings.gradle).
 // `./gradlew :fabric:runBlockScraper`, or from the block-scraper CLI:
 //   block-scraper start --project-dir <this repo> --task :fabric:runBlockScraper
