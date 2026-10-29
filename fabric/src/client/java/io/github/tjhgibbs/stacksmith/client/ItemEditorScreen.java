@@ -13,6 +13,7 @@ import io.github.tjhgibbs.stacksmith.core.command.Commands;
 import io.github.tjhgibbs.stacksmith.core.item.ItemSpec;
 import io.github.tjhgibbs.stacksmith.core.preset.Presets;
 import io.github.tjhgibbs.stacksmith.core.nbt.Nbt;
+import io.github.tjhgibbs.stacksmith.mod.McRegistries;
 import io.github.tjhgibbs.stacksmith.core.nbt.SnbtException;
 import io.github.tjhgibbs.stacksmith.core.outline.Outline;
 import io.github.tjhgibbs.stacksmith.core.schema.ComponentSchema;
@@ -62,6 +63,14 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
     static final ComponentSchema SCHEMA = ComponentSchema.bundled();
     /** Always on screen at the top of the form, set or not: what almost every item needs. */
     static final List<String> PINNED = List.of("minecraft:custom_name", "minecraft:lore", "minecraft:enchantments");
+    /** Items whose potion contents are the point of them: that card is pinned too. */
+    private static final List<String> POTION_ITEMS = List.of("minecraft:potion", "minecraft:splash_potion",
+            "minecraft:lingering_potion", "minecraft:tipped_arrow");
+
+    /** Cards always shown, set or not: name, lore, enchantments, and potion contents on potions. */
+    private List<String> pinned() {
+        return POTION_ITEMS.contains(spec.id()) ? List.of("minecraft:custom_name", "minecraft:lore", "minecraft:potion_contents", "minecraft:enchantments") : PINNED;
+    }
     private static final int TOP = 24, FOOTER = 46;
     private static final long DEBOUNCE_MS = 120;
 
@@ -139,6 +148,7 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
         buildHeader();
         buildLeft();
         buildMiddle();
+        buildRightColumn();
         buildFooter();
         changed();
     }
@@ -229,7 +239,7 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
         String group = null;
         int count = 0;
         for (ComponentSchema.Info info : available) {
-            if (spec.components().has(info.id()) || spec.removed().contains(info.id()) || PINNED.contains(info.id())) {
+            if (spec.components().has(info.id()) || spec.removed().contains(info.id()) || pinned().contains(info.id())) {
                 continue;
             }
             if (!q.isEmpty() && !info.id().contains(q) && !info.about().toLowerCase(Locale.ROOT).contains(q)) {
@@ -305,12 +315,12 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
             if (!spec.removed().isEmpty()) {
                 cards.add(new RemovedCard());
             }
-            for (String id : PINNED) {
+            for (String id : pinned()) {
                 if (!spec.removed().contains(id)) {
                     cards.add(ComponentCards.create(SCHEMA.info(id), this));
                 }
             }
-            List<String> others = spec.components().keys().stream().filter(id -> !PINNED.contains(id)).toList();
+            List<String> others = spec.components().keys().stream().filter(id -> !pinned().contains(id)).toList();
             if (!others.isEmpty()) {
                 cards.add(new HeaderRow("More (" + others.size() + ")"));
             }
@@ -325,6 +335,53 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
         cards.layout();
         cards.scroll(cardScroll);
         cardScroll = cards.scroll();
+    }
+
+    /**
+     * Components whose tooltip lines "Only name & lore" hides (via tooltip_display). Ones this
+     * game version doesn't have are skipped.
+     */
+    private static final List<String> TOOLTIP_LINES = List.of("attribute_modifiers", "enchantments", "stored_enchantments",
+            "unbreakable", "dyed_color", "trim", "can_break", "can_place_on", "potion_contents", "potion_duration_scale",
+            "suspicious_stew_effects", "jukebox_playable", "bundle_contents", "charged_projectiles", "container",
+            "written_book_content", "firework_explosion", "fireworks", "instrument", "map_id", "ominous_bottle_amplifier",
+            "pot_decorations", "banner_patterns", "base_color", "provides_trim_material", "provides_banner_patterns",
+            "block_state", "tropical_fish/pattern", "painting/variant");
+
+    private boolean onlyNameAndLore() {
+        return spec.get("tooltip_display") instanceof Nbt.Compound c && c.getList("hidden_components") instanceof Nbt.List l
+                && l.items().stream().anyMatch(n -> n instanceof Nbt.Str s && Ids.full(s.value()).equals("minecraft:attribute_modifiers"));
+    }
+
+    private void toggleOnlyNameAndLore() {
+        Nbt.Compound display = spec.get("tooltip_display") instanceof Nbt.Compound c ? c.copy() : new Nbt.Compound();
+        if (onlyNameAndLore()) {
+            display.remove("hidden_components");
+        } else {
+            // Only what this item has (its own components and the type's defaults), to keep /give short.
+            Nbt.List hidden = new Nbt.List();
+            for (String id : TOOLTIP_LINES) {
+                var type = net.minecraft.core.registries.BuiltInRegistries.DATA_COMPONENT_TYPE
+                        .getValue(net.minecraft.resources.Identifier.parse(Ids.full(id)));
+                if (type != null && (stack.isEmpty() || stack.has(type))) {
+                    hidden.add(Nbt.str(id));
+                }
+            }
+            display.put("hidden_components", hidden);
+        }
+        if (display.isEmpty()) {
+            spec.unset("tooltip_display");
+        } else {
+            spec.set("tooltip_display", display);
+        }
+        changed();
+        rebuild();
+    }
+
+    private void buildRightColumn() {
+        addRenderableWidget(Chip.of("Only name & lore", rightW(), 14, this::toggleOnlyNameAndLore)
+                .selected(this::onlyNameAndLore).at(rightX(), bodyBottom() - 14)
+                .tip("Hide the other tooltip lines this item has (attack damage, enchantments, unbreakable, dye, effects...). Uses tooltip_display; click again after adding components."));
     }
 
     private void buildFooter() {
@@ -441,7 +498,7 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
 
     @Override
     public boolean isPinned(String id) {
-        return PINNED.contains(id);
+        return pinned().contains(id);
     }
 
     @Override

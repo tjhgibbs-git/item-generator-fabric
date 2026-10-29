@@ -73,6 +73,8 @@ public final class MobEditorScreen extends StacksmithScreen {
     private static String search = "";
     private static final Map<String, ItemStack> EGGS = new HashMap<>();
     private static final EntitySchema SCHEMA = EntitySchema.bundled();
+    /** Mobs that shoot the arrow held in their off hand. */
+    private static final List<String> ARCHERS = List.of("minecraft:skeleton", "minecraft:stray", "minecraft:bogged");
 
     private final EntitySpec mob;
     private final Consumer<EntitySpec> onDone;
@@ -473,7 +475,12 @@ public final class MobEditorScreen extends StacksmithScreen {
                     McItems.Result r = McItems.toStack(item, Delivery.registries());
                     icon = r.ok() ? r.stack() : ItemStack.EMPTY;
                 }
-                String label = slotName(s) + ": " + (item == null ? "empty" : icon.isEmpty() ? Ids.pretty(item.id()) : icon.getHoverName().getString());
+                // Skeletons shoot the tipped arrow in their off hand, with its effects.
+                boolean arrows = s == EntitySpec.Slot.OFFHAND && ARCHERS.contains(mob.id());
+                // A mob with custom data doesn't get its natural gear, so an archer needs its bow given.
+                boolean bow = s == EntitySpec.Slot.MAINHAND && ARCHERS.contains(mob.id());
+                String label = slotName(s) + ": " + (item == null ? (arrows ? "empty (✎ for a tipped arrow)" : bow ? "empty (needs a bow to shoot)" : "empty")
+                        : icon.isEmpty() ? Ids.pretty(item.id()) : icon.getHoverName().getString());
                 Chip pickChip = Chip.of(label, 80, 18, () -> minecraft.setScreenAndShow(new ItemPickerScreen(MobEditorScreen.this, picked -> {
                     mob.equipment(s, picked);
                     changed();
@@ -484,11 +491,16 @@ public final class MobEditorScreen extends StacksmithScreen {
                 pick.add(body(pickChip));
                 Chip e = body(Chip.of("✎", 16, 18, () -> {
                     ItemSpec current = mob.equipment(s);
-                    minecraft.setScreenAndShow(new ItemEditorScreen(MobEditorScreen.this, current != null ? current : new ItemSpec("stone"), result -> {
+                    ItemSpec start = current != null ? current : arrows
+                            ? new ItemSpec("tipped_arrow").set("potion_contents", new Nbt.Compound().put("potion", "minecraft:poison"))
+                            : bow ? new ItemSpec("bow") : new ItemSpec("stone");
+                    minecraft.setScreenAndShow(new ItemEditorScreen(MobEditorScreen.this, start, result -> {
                         mob.equipment(s, result);
                         changed();
                     }));
-                }).tip("Edit this item in full (enchantments, name, anything)"));
+                }).tip(item == null && arrows ? "Give it a tipped arrow: it shoots arrows with these effects"
+                        : item == null && bow ? "Give it a bow. Mobs with any custom data don't get their usual gear, so without one it can't shoot."
+                        : "Edit this item in full (enchantments, name, anything)"));
                 edit.add(e);
                 Chip c = body(Chip.of("✕", 14, 18, () -> {
                     mob.equipment(s, null);

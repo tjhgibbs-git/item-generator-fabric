@@ -8,6 +8,7 @@ import io.github.tjhgibbs.stacksmith.client.ui.SuggestBox;
 import io.github.tjhgibbs.stacksmith.client.ui.Swatch;
 import io.github.tjhgibbs.stacksmith.client.ui.Theme;
 import io.github.tjhgibbs.stacksmith.core.Ids;
+import io.github.tjhgibbs.stacksmith.core.entity.EntitySpec;
 import io.github.tjhgibbs.stacksmith.core.item.ItemSpec;
 import io.github.tjhgibbs.stacksmith.core.nbt.Nbt;
 import io.github.tjhgibbs.stacksmith.core.nbt.Snbt;
@@ -77,6 +78,7 @@ public final class ComponentCards {
             case ID -> value instanceof Nbt.Str ? new IdCard(info, host) : new OutlineCard(info, host);
             case ENCHANTMENTS -> value == null || value instanceof Nbt.Compound ? new EnchantmentsCard(info, host) : new OutlineCard(info, host);
             case MODIFIERS -> ModifiersCard.fits(value) ? new ModifiersCard(info, host) : new OutlineCard(info, host);
+            case POTION -> value == null || value instanceof Nbt.Str || value instanceof Nbt.Compound ? new PotionCard(info, host) : new OutlineCard(info, host);
             default -> new OutlineCard(info, host);
         };
         return card;
@@ -600,6 +602,206 @@ public final class ComponentCards {
             add.setX(x);
             add.setY(cy);
             return cy - y + 14;
+        }
+    }
+
+    // ---- potions ------------------------------------------------------------------------------
+
+    /**
+     * potion_contents: base potion, colour, and extra effects (one row each: effect, level,
+     * seconds or ∞, particles). Works for potions and tipped arrows; arrows apply 1/8 of the
+     * duration, as in the game.
+     */
+    static final class PotionCard extends ComponentCard {
+        private final SuggestBox potion;
+        private final EditBox color;
+        private final List<SuggestBox> ids = new ArrayList<>();
+        private final List<EditBox> levels = new ArrayList<>(), durations = new ArrayList<>();
+        private final List<Chip> particles = new ArrayList<>(), removers = new ArrayList<>();
+        private final Chip add;
+        private final List<EntitySpec.Effect> effects = new ArrayList<>();
+
+        PotionCard(ComponentSchema.Info info, Host host) {
+            super(info, host);
+            Nbt.Compound c = contents();
+            List<String> potions = McRegistries.ids("minecraft:potion", host.registries());
+            potion = body(new SuggestBox(font, 100, 16, Component.literal("Potion"), () -> potions));
+            potion.setValueQuietly(c.getString("potion", "").isEmpty() ? "" : Ids.brief(c.getString("potion", "")));
+            potion.setHint(Component.literal("none"));
+            potion.setTooltip(Tooltip.create(Component.literal("The base potion (its own effects and colour). Empty for none: only the effects below.")));
+            potion.onAccept(s -> {
+                String full = Ids.full(s.strip());
+                boolean ok = s.isBlank() || potions.isEmpty() || potions.contains(full);
+                potion.setTextColor(ok ? Theme.TEXT : Theme.WARN);
+                if (ok) {
+                    Nbt.Compound now = contents();
+                    now.putOrRemove("potion", s.isBlank() ? null : Nbt.str(full));
+                    write(now);
+                }
+            });
+            color = body(new EditBox(font, 0, 0, 52, 16, Component.literal("Colour")));
+            color.setMaxLength(7);
+            color.setHint(Component.literal("#colour"));
+            long rgb = c.getLong("custom_color", Long.MIN_VALUE);
+            color.setValue(rgb == Long.MIN_VALUE ? "" : String.format(Locale.ROOT, "#%06x", rgb & 0xFFFFFF));
+            color.setTooltip(Tooltip.create(Component.literal("Liquid / arrow tip colour as hex (ff8800). Empty: mixed from the effects.")));
+            color.setResponder(t -> {
+                String h = t.strip().startsWith("#") ? t.strip().substring(1) : t.strip();
+                boolean ok = h.isEmpty() || h.matches("[0-9a-fA-F]{6}");
+                color.setTextColor(ok ? Theme.TEXT : Theme.BAD);
+                if (ok) {
+                    Nbt.Compound now = contents();
+                    now.putOrRemove("custom_color", h.isEmpty() ? null : Nbt.i(Integer.parseInt(h, 16) | 0xFF000000));
+                    write(now);
+                }
+            });
+            if (c.getList("custom_effects") instanceof Nbt.List l) {
+                l.items().forEach(n -> {
+                    if (n instanceof Nbt.Compound e) {
+                        effects.add(EntitySpec.Effect.fromTag(e));
+                    }
+                });
+            }
+            List<String> all = McRegistries.ids("minecraft:mob_effect", host.registries());
+            for (int i = 0; i < effects.size(); i++) {
+                int index = i;
+                EntitySpec.Effect e = effects.get(i);
+                SuggestBox id = body(new SuggestBox(font, 100, 16, Component.literal("Effect"), () -> all));
+                id.setValueQuietly(Ids.brief(e.id()));
+                id.onAccept(s -> {
+                    String full = Ids.full(s);
+                    boolean ok = all.isEmpty() || all.contains(full);
+                    id.setTextColor(ok ? Theme.TEXT : Theme.WARN);
+                    if (ok) {
+                        EntitySpec.Effect x = effects.get(index);
+                        update(index, new EntitySpec.Effect(full, x.amplifier(), x.duration(), x.ambient(), x.particles(), x.icon()));
+                    }
+                });
+                ids.add(id);
+                EditBox level = body(new EditBox(font, 0, 0, 26, 16, Component.literal("Level")));
+                level.setValue(Integer.toString(e.amplifier() + 1));
+                level.setTooltip(Tooltip.create(Component.literal("Level (1 is the normal effect)")));
+                level.setResponder(t -> {
+                    try {
+                        int v = Integer.parseInt(t.strip());
+                        boolean ok = v >= 1 && v <= 128;
+                        level.setTextColor(ok ? Theme.TEXT : Theme.BAD);
+                        if (ok) {
+                            EntitySpec.Effect x = effects.get(index);
+                            update(index, new EntitySpec.Effect(x.id(), v - 1, x.duration(), x.ambient(), x.particles(), x.icon()));
+                        }
+                    } catch (NumberFormatException ex) {
+                        level.setTextColor(Theme.BAD);
+                    }
+                });
+                levels.add(level);
+                EditBox duration = body(new EditBox(font, 0, 0, 34, 16, Component.literal("Seconds")));
+                duration.setValue(e.duration() < 0 ? "" : trimSeconds(e.duration() / 20.0));
+                duration.setHint(Component.literal("∞"));
+                duration.setTooltip(Tooltip.create(Component.literal("Seconds; empty for forever. Tipped arrows give 1/8 of this.")));
+                duration.setResponder(t -> {
+                    try {
+                        int ticks = t.isBlank() ? -1 : (int) Math.round(Double.parseDouble(t.strip()) * 20);
+                        duration.setTextColor(Theme.TEXT);
+                        EntitySpec.Effect x = effects.get(index);
+                        update(index, new EntitySpec.Effect(x.id(), x.amplifier(), ticks, x.ambient(), x.particles(), x.icon()));
+                    } catch (NumberFormatException ex) {
+                        duration.setTextColor(Theme.BAD);
+                    }
+                });
+                durations.add(duration);
+                particles.add(body(Chip.of("✦", 16, 16, () -> {
+                    EntitySpec.Effect x = effects.get(index);
+                    update(index, new EntitySpec.Effect(x.id(), x.amplifier(), x.duration(), x.ambient(), !x.particles(), x.icon()));
+                }).selected(() -> effects.get(index).particles()).tip("Show particles")));
+                removers.add(body(Chip.of("✕", 14, 16, () -> {
+                    effects.remove(index);
+                    writeEffects();
+                    host.rebuild();
+                }).color(Theme.BAD).tip("Remove this effect")));
+            }
+            add = body(Chip.of("+ Add effect", 80, 14, () -> {
+                effects.add(new EntitySpec.Effect("minecraft:poison", 0, 30 * 20, false, true, true));
+                writeEffects();
+                host.rebuild();
+            }));
+            String base = c.getString("potion", "");
+            status = (base.isEmpty() ? "" : Ids.pretty(base)) + (effects.isEmpty() ? "" : (base.isEmpty() ? "" : " + ") + effects.size() + (effects.size() == 1 ? " effect" : " effects"));
+            statusColor = Theme.TEXT_DIM;
+        }
+
+        private static String trimSeconds(double d) {
+            return d == Math.rint(d) ? Long.toString((long) d) : Double.toString(d);
+        }
+
+        /** The value as a compound (the game also accepts a bare potion id). */
+        private Nbt.Compound contents() {
+            Nbt v = value();
+            if (v instanceof Nbt.Compound c) {
+                return c.copy();
+            }
+            Nbt.Compound c = new Nbt.Compound();
+            if (v instanceof Nbt.Str s) {
+                c.put("potion", s.value());
+            }
+            return c;
+        }
+
+        private void write(Nbt.Compound c) {
+            if (c.isEmpty()) {
+                host.item().unset(info.id());
+                host.changed();
+            } else {
+                set(c);
+            }
+        }
+
+        private void update(int index, EntitySpec.Effect e) {
+            effects.set(index, e);
+            writeEffects();
+        }
+
+        private void writeEffects() {
+            Nbt.Compound c = contents();
+            Nbt.List l = new Nbt.List();
+            effects.forEach(e -> l.add(e.toTag()));
+            c.putOrRemove("custom_effects", l.isEmpty() ? null : l);
+            write(c);
+        }
+
+        @Override
+        protected int layoutBody(int x, int y, int w) {
+            int lw = 44;
+            potion.setX(x + lw);
+            potion.setY(y);
+            potion.setWidth(w - lw - 56);
+            color.setX(x + w - 52);
+            color.setY(y);
+            int cy = y + 20;
+            for (int i = 0; i < ids.size(); i++) {
+                int idW = Math.max(40, w - 26 - 34 - 16 - 14 - 8);
+                ids.get(i).setX(x);
+                ids.get(i).setY(cy);
+                ids.get(i).setWidth(idW);
+                int rx = x + idW + 2;
+                levels.get(i).setX(rx);
+                levels.get(i).setY(cy);
+                durations.get(i).setX(rx + 28);
+                durations.get(i).setY(cy);
+                particles.get(i).setX(rx + 64);
+                particles.get(i).setY(cy);
+                removers.get(i).setX(x + w - 14);
+                removers.get(i).setY(cy);
+                cy += 18;
+            }
+            add.setX(x);
+            add.setY(cy);
+            return cy - y + 14;
+        }
+
+        @Override
+        protected void extractBody(GuiGraphicsExtractor g, int x, int y, int w, int mouseX, int mouseY) {
+            g.text(font, "Potion", x, y + 4, Theme.TEXT_DIM, false);
         }
     }
 

@@ -25,7 +25,7 @@ public final class ComponentSchema {
 
     /** The form used to edit a component. */
     public enum Editor {
-        TEXT, TEXT_LIST, INT, FLOAT, BOOL, UNIT, ENUM, COLOR, ID, ENCHANTMENTS, MODIFIERS, EFFECTS, OUTLINE;
+        TEXT, TEXT_LIST, INT, FLOAT, BOOL, UNIT, ENUM, COLOR, ID, ENCHANTMENTS, MODIFIERS, EFFECTS, POTION, OUTLINE;
 
         static Editor of(String s) {
             try {

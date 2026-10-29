@@ -10,7 +10,7 @@
 #   group     list heading: display, enchanting, combat, tool, food, equipment, block, entity,
 #             container, book, fireworks, map, behaviour, data
 #   editor    form: text, text_list, int, float, bool, unit, enum, color, id, enchantments,
-#             modifiers, effects, outline (anything else)
+#             modifiers, effects, potion, outline (anything else)
 #   about     one-line help shown under the form
 #   default   value used when the component is added (outline syntax, as in the raw view)
 #   min, max  for int/float
@@ -227,7 +227,7 @@ components:
       seconds: 1.0f
   potion_contents:
     group: food
-    editor: outline
+    editor: potion
     about: Potion type, colour and extra effects (potions, arrows, cauldrons).
     default:
       potion: minecraft:strength
