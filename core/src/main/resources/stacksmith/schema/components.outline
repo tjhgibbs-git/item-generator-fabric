@@ -1,0 +1,465 @@
+# Stacksmith component schema, written for Minecraft 26.3.
+#
+# This file only makes editing nicer: it picks a form for each component, groups them, and
+# gives a starting value when one is added. The list of components itself comes from the
+# running game, so a component missing here still appears (edited as an outline), and one
+# listed here that the game doesn't have is hidden. To support a new Minecraft version, add or
+# fix entries here; no code changes are needed unless a new kind of form is wanted.
+#
+# Fields:
+#   group     list heading: display, enchanting, combat, tool, food, equipment, block, entity,
+#             container, book, fireworks, map, behaviour, data
+#   editor    form: text, text_list, int, float, bool, unit, enum, color, id, enchantments,
+#             modifiers, effects, outline (anything else)
+#   about     one-line help shown under the form
+#   default   value used when the component is added (outline syntax, as in the raw view)
+#   min, max  for int/float
+#   values    for enum
+#   registry  for id: the registry ids are picked from (minecraft:item, minecraft:sound_event...)
+#   upright   for text/text_list: write italic:false unless &o is used (default true)
+
+components:
+  # ---- display ----------------------------------------------------------------------------
+  custom_name:
+    group: display
+    editor: text
+    about: The name shown in the tooltip and when held. Like an anvil rename.
+    default: New name
+  item_name:
+    group: display
+    editor: text
+    about: The item's base name. Not italic, and anvils can't change it. Use instead of custom_name for "real" item names.
+    upright: false
+    default: New item
+  lore:
+    group: display
+    editor: text_list
+    about: Lines under the name in the tooltip. One line per entry.
+    default: [Lore line]
+  rarity:
+    group: display
+    editor: enum
+    values: [common, uncommon, rare, epic]
+    about: Name colour: white, yellow, aqua, light purple.
+    default: rare
+  enchantment_glint_override:
+    group: display
+    editor: bool
+    about: Force the enchantment shimmer on (true) or off (false).
+    default: true
+  dyed_color:
+    group: display
+    editor: color
+    about: Dye colour of leather armour, wolf armour and similar.
+    default: 10511680
+  item_model:
+    group: display
+    editor: id
+    registry: minecraft:item
+    about: Show the item with another item's model (any model id from a resource pack works too).
+    default: minecraft:diamond
+  custom_model_data:
+    group: display
+    editor: outline
+    about: Values a resource pack's model can select on (floats, flags, strings, colors).
+    default:
+      floats: [1.0]
+  tooltip_display:
+    group: display
+    editor: outline
+    about: Hide the whole tooltip, or only some components' lines (hidden_components).
+    default:
+      hide_tooltip: false
+      hidden_components: [minecraft:enchantments]
+  tooltip_style:
+    group: display
+    editor: id
+    about: Tooltip background and frame sprites from a resource pack.
+    default: minecraft:custom
+  map_color:
+    group: map
+    editor: color
+    about: Colour of the filled map item's markings.
+    default: 4603950
+  # ---- enchanting -----------------------------------------------------------------------------
+  enchantments:
+    group: enchanting
+    editor: enchantments
+    about: Enchantments and their levels. Any level up to 255 works with commands.
+    default:
+      minecraft:sharpness: 5
+  stored_enchantments:
+    group: enchanting
+    editor: enchantments
+    about: Enchantments stored in an enchanted book (applied with an anvil).
+    default:
+      minecraft:mending: 1
+  enchantable:
+    group: enchanting
+    editor: outline
+    about: Lets the item be enchanted at a table; value is its enchantability.
+    default:
+      value: 10
+  repair_cost:
+    group: enchanting
+    editor: int
+    min: 0
+    max: 2147483647
+    about: Extra levels an anvil charges. 0 makes repairs cheap forever.
+    default: 0
+  repairable:
+    group: enchanting
+    editor: outline
+    about: Items that repair this one in an anvil (an id, a list, or a #tag).
+    default:
+      items: minecraft:diamond
+  # ---- durability ----------------------------------------------------------------------------
+  unbreakable:
+    group: combat
+    editor: unit
+    about: Never loses durability.
+    default: {}
+  damage:
+    group: combat
+    editor: int
+    min: 0
+    max: 2147483647
+    about: Durability used so far (0 is like new).
+    default: 0
+  max_damage:
+    group: combat
+    editor: int
+    min: 1
+    max: 2147483647
+    about: Total durability. Makes any item damageable (stack size must be 1).
+    default: 100
+  max_stack_size:
+    group: behaviour
+    editor: int
+    min: 1
+    max: 99
+    about: How many fit in one slot (1 to 99).
+    default: 64
+  # ---- combat ---------------------------------------------------------------------------------
+  attribute_modifiers:
+    group: combat
+    editor: modifiers
+    about: Attribute changes while held or worn (damage, speed, health, scale...).
+    default:
+      - type: minecraft:attack_damage
+        id: stacksmith:damage
+        amount: 10.0
+        operation: add_value
+        slot: mainhand
+  weapon:
+    group: combat
+    editor: outline
+    about: Durability used per hit, and how long a hit disables shields.
+    default:
+      item_damage_per_attack: 1
+      disable_blocking_for_seconds: 0.0f
+  blocks_attacks:
+    group: combat
+    editor: outline
+    about: Makes the item block like a shield.
+    default:
+      block_delay_seconds: 0.25f
+  damage_resistant:
+    group: combat
+    editor: outline
+    about: The dropped item survives these damage types (e.g. fire, like netherite).
+    default:
+      types: "#minecraft:is_fire"
+  death_protection:
+    group: combat
+    editor: outline
+    about: Saves the holder from death like a totem, with these effects.
+    default:
+      death_effects:
+        - type: clear_all_status_effects
+  # ---- tools ----------------------------------------------------------------------------------
+  tool:
+    group: tool
+    editor: outline
+    about: Mining speed rules and durability per block.
+    default:
+      default_mining_speed: 1.0f
+      damage_per_block: 1
+      rules:
+        - blocks: "#minecraft:mineable/pickaxe"
+          speed: 8.0f
+          correct_for_drops: true
+  can_break:
+    group: tool
+    editor: outline
+    about: Blocks this can break in adventure mode.
+    default:
+      - blocks: minecraft:stone
+  can_place_on:
+    group: tool
+    editor: outline
+    about: Blocks this can be placed on in adventure mode.
+    default:
+      - blocks: minecraft:grass_block
+  # ---- food and use ---------------------------------------------------------------------------
+  food:
+    group: food
+    editor: outline
+    about: Hunger and saturation restored. Needs consumable too.
+    default:
+      nutrition: 4
+      saturation: 2.4f
+      can_always_eat: false
+  consumable:
+    group: food
+    editor: outline
+    about: Makes the item eatable or drinkable, with effects on use.
+    default:
+      consume_seconds: 1.6f
+      animation: eat
+      has_consume_particles: true
+  use_remainder:
+    group: food
+    editor: outline
+    about: Item left behind after using one up (like a bowl).
+    default:
+      id: minecraft:bowl
+  use_cooldown:
+    group: food
+    editor: outline
+    about: Cooldown after use, optionally shared by a group.
+    default:
+      seconds: 1.0f
+  potion_contents:
+    group: food
+    editor: outline
+    about: Potion type, colour and extra effects (potions, arrows, cauldrons).
+    default:
+      potion: minecraft:strength
+  potion_duration_scale:
+    group: food
+    editor: float
+    min: 0
+    max: 1000
+    about: Multiplies the duration of the potion's effects.
+    default: 1.0f
+  suspicious_stew_effects:
+    group: food
+    editor: outline
+    about: Effects given by suspicious stew.
+    default:
+      - id: minecraft:night_vision
+        duration: 160
+  ominous_bottle_amplifier:
+    group: food
+    editor: int
+    min: 0
+    max: 4
+    about: Bad Omen level of an ominous bottle (0 is level I).
+    default: 0
+  # ---- equipment -----------------------------------------------------------------------------
+  equippable:
+    group: equipment
+    editor: outline
+    about: Lets the item be worn in a slot, with its model, sound and options.
+    default:
+      slot: head
+      equip_sound: minecraft:item.armor.equip_generic
+  glider:
+    group: equipment
+    editor: unit
+    about: Glide like an elytra when worn.
+    default: {}
+  trim:
+    group: equipment
+    editor: outline
+    about: Armour trim material and pattern.
+    default:
+      material: minecraft:gold
+      pattern: minecraft:sentry
+  # ---- blocks and entities ------------------------------------------------------------------
+  block_entity_data:
+    group: block
+    editor: outline
+    about: Data of the block entity placed by this item (spawners, chests, signs...). Needs an id.
+    default:
+      id: minecraft:chest
+  block_state:
+    group: block
+    editor: outline
+    about: Block state properties of the placed block (as strings).
+    default:
+      facing: north
+  entity_data:
+    group: entity
+    editor: outline
+    about: Data of the entity this item spawns (spawn eggs, armour stands, item frames). Needs an id.
+    default:
+      id: minecraft:zombie
+  bucket_entity_data:
+    group: entity
+    editor: outline
+    about: Data of the mob in a bucket (fish, axolotl, tadpole).
+    default:
+      NoAI: true
+  profile:
+    group: display
+    editor: outline
+    about: Whose head this is: a player name, or name/id/properties.
+    default: Notch
+  note_block_sound:
+    group: block
+    editor: id
+    registry: minecraft:sound_event
+    about: Sound a note block plays with this head on it.
+    default: minecraft:entity.zombie.ambient
+  base_color:
+    group: block
+    editor: enum
+    values: [white, orange, magenta, light_blue, yellow, lime, pink, gray, light_gray, cyan, purple, blue, brown, green, red, black]
+    about: Base colour of a shield's banner.
+    default: white
+  banner_patterns:
+    group: block
+    editor: outline
+    about: Banner layers, bottom first.
+    default:
+      - pattern: minecraft:stripe_top
+        color: red
+  lock:
+    group: block
+    editor: outline
+    about: Only a player holding a matching item can open this container.
+    default:
+      components:
+        minecraft:custom_name: Key
+  # ---- containers --------------------------------------------------------------------------
+  container:
+    group: container
+    editor: outline
+    about: Contents of a shulker box, chest... (slot 0 to 26).
+    default:
+      - slot: 0
+        item:
+          id: minecraft:diamond
+          count: 64
+  bundle_contents:
+    group: container
+    editor: outline
+    about: Items inside a bundle.
+    default:
+      - id: minecraft:diamond
+        count: 16
+  charged_projectiles:
+    group: container
+    editor: outline
+    about: Projectiles loaded in a crossbow.
+    default:
+      - id: minecraft:firework_rocket
+  container_loot:
+    group: container
+    editor: outline
+    about: Loot table the container fills from when first opened.
+    default:
+      loot_table: minecraft:chests/simple_dungeon
+  # ---- books -----------------------------------------------------------------------------------
+  written_book_content:
+    group: book
+    editor: outline
+    about: A signed book's title, author and pages (each page is a text component).
+    default:
+      title: Untitled
+      author: Stacksmith
+      pages: [Page one]
+  writable_book_content:
+    group: book
+    editor: outline
+    about: Pages of a book and quill (plain text).
+    default:
+      pages: [Page one]
+  # ---- fireworks -------------------------------------------------------------------------------
+  fireworks:
+    group: fireworks
+    editor: outline
+    about: Rocket flight time and explosions.
+    default:
+      flight_duration: 1b
+      explosions:
+        - shape: large_ball
+          colors: [I; 16711680]
+  firework_explosion:
+    group: fireworks
+    editor: outline
+    about: The explosion of a firework star.
+    default:
+      shape: star
+      colors: [I; 16776960]
+  # ---- other ---------------------------------------------------------------------------------
+  instrument:
+    group: behaviour
+    editor: id
+    registry: minecraft:instrument
+    about: Goat horn sound.
+    default: minecraft:ponder_goat_horn
+  jukebox_playable:
+    group: behaviour
+    editor: id
+    registry: minecraft:jukebox_song
+    about: Song a jukebox plays from this item.
+    default: minecraft:pigstep
+  break_sound:
+    group: behaviour
+    editor: id
+    registry: minecraft:sound_event
+    about: Sound when the item breaks.
+    default: minecraft:entity.item.break
+  intangible_projectile:
+    group: behaviour
+    editor: unit
+    about: Fired as a projectile that can't be picked up.
+    default: {}
+  recipes:
+    group: behaviour
+    editor: outline
+    about: Recipes unlocked by a knowledge book.
+    default: [minecraft:diamond_sword]
+  map_id:
+    group: map
+    editor: int
+    min: 0
+    max: 2147483647
+    about: Which map data this filled map shows.
+    default: 0
+  lodestone_tracker:
+    group: map
+    editor: outline
+    about: Where a compass points.
+    default:
+      tracked: false
+      target:
+        dimension: minecraft:overworld
+        pos: [I; 0, 64, 0]
+  custom_data:
+    group: data
+    editor: outline
+    about: Your own data, ignored by the game (datapacks can test for it).
+    default:
+      my_tag: true
+
+# Groups in display order, with their headings.
+groups:
+  display: Display
+  enchanting: Enchanting
+  combat: Combat & durability
+  tool: Tools
+  food: Food & potions
+  equipment: Equipment
+  block: Blocks
+  entity: Entities
+  container: Containers
+  book: Books
+  fireworks: Fireworks
+  map: Maps & compasses
+  behaviour: Behaviour
+  data: Data
+  other: Other
