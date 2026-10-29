@@ -248,7 +248,9 @@ public final class MobEditorScreen extends StacksmithScreen {
                     .bounds(x, y + 44, w, 20).build());
             y += 22;
             toSpawner = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.to_spawner"), b -> {
-                WorldSpawner.link(new SpawnerSpec(mob.copy()), null);
+                SpawnerSpec fresh = new SpawnerSpec();
+                fresh.entries().add(new SpawnerSpec.Entry(mob.copy(), 1).classicLight());
+                WorldSpawner.link(fresh, null);
                 minecraft.setScreenAndShow(new SpawnerEditorScreen(parent));
             }).bounds(x, y + 44, w, 20).tooltip(Tooltip.create(Component.translatable("stacksmith.tooltip.to_spawner"))).build());
             y += 66;

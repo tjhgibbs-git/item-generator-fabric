@@ -50,6 +50,25 @@ public final class SpawnerSpec {
             this.weight = Math.max(1, weight);
         }
 
+        /**
+         * The old (pre-1.18) spawner light rule: spawns at light 7 or below, 11 or below for
+         * blazes and silverfish. Applied to both block and sky light, which the game checks
+         * separately (sky light doesn't drop at night, so an open-air spawner won't fire).
+         */
+        public Entry classicLight() {
+            int max = classicMax(entity.id());
+            blockLight = new int[]{0, max};
+            skyLight = new int[]{0, max};
+            return this;
+        }
+
+        public static int classicMax(String entityId) {
+            return switch (io.github.tjhgibbs.stacksmith.core.Ids.full(entityId)) {
+                case "minecraft:blaze", "minecraft:silverfish" -> 11;
+                default -> 7;
+            };
+        }
+
         Nbt.Compound spawnData() {
             Nbt.Compound c = new Nbt.Compound().put("entity", entity.toTag());
             if (blockLight != null || skyLight != null) {

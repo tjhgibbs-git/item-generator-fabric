@@ -98,7 +98,7 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
 
     private void addMob() {
         minecraft.setScreenAndShow(new MobEditorScreen(this, new EntitySpec("zombie"), result -> {
-            spawner.entries().add(new SpawnerSpec.Entry(result, 1));
+            spawner.entries().add(new SpawnerSpec.Entry(result, 1).classicLight());
             Session.spawnerEntry = spawner.entries().size() - 1;
             changed();
         }));
@@ -548,9 +548,14 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         private static final String[] LABELS = {"Block light", "Sky light"};
 
         LightCard(SpawnerSpec.Entry entry) {
-            super("Light levels", 0xFFFFE066, "Empty (—): the mob's usual rule (hostile mobs need darkness). When set, the ranges replace it. 0 is dark, 15 is full light.");
+            super("Light levels", 0xFFFFE066, "The light it spawns in, 0 (dark) to 15. When set, these replace the mob's own spawn rules. Sky light is checked as is, so it doesn't drop at night. Empty (—): the mob's own rules.");
             this.entry = entry;
-            headerButton("Normal", 40, "Clear: the mob's usual light rule", () -> {
+            headerButton("Classic", 44, "The old spawner rule: light 7 or below (11 for blazes and silverfish). New mobs start with this.", () -> {
+                entry.classicLight();
+                changed();
+                rebuild();
+            });
+            headerButton("Normal", 40, "Clear: the mob's own spawn rules (today's game: most hostile mobs need block light 0)", () -> {
                 entry.blockLight = null;
                 entry.skyLight = null;
                 changed();
@@ -641,7 +646,14 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
             super("Mob", 0xFFFF9EC7, "What this spawner makes. Edit mob… opens the full mob editor.");
             EntitySpec mob = mob();
             edit = body(Chip.of("Edit mob…", 70, 16, () -> minecraft.setScreenAndShow(new MobEditorScreen(SpawnerEditorScreen.this, mob, result -> {
-                entry().entity = result;
+                SpawnerSpec.Entry e = entry();
+                // On the classic rule for the old type? Then follow it to the new type (7 or 11).
+                int old = SpawnerSpec.Entry.classicMax(e.entity.id());
+                boolean classic = java.util.Arrays.equals(e.blockLight, new int[]{0, old}) && java.util.Arrays.equals(e.skyLight, new int[]{0, old});
+                e.entity = result;
+                if (classic) {
+                    e.classicLight();
+                }
                 changed();
             }))).tip("Type, name, gear, behaviour, stats, effects"));
             if (spawner.entries().size() > 1) {
