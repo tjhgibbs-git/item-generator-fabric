@@ -15,6 +15,11 @@ public final class Session {
     public static BlockPos spawnerPos;
     /** Form cards (false) or the whole item as one outline (true). */
     public static boolean outlineView;
+    /** The item tab's simple view: one section (name and lore, enchantments...) at a time. */
+    public static boolean simpleItems = true;
+    public static String itemSection = "name";
+    /** Show times in ticks (20 per second) instead of seconds. */
+    public static boolean ticks;
     public static boolean briefCommands = true;
     public static String target = "@s";
 

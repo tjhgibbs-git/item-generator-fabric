@@ -67,6 +67,38 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
     private static final List<String> POTION_ITEMS = List.of("minecraft:potion", "minecraft:splash_potion",
             "minecraft:lingering_potion", "minecraft:tipped_arrow");
 
+    /** A part of the simple view: a button on the left, its components' cards in the middle. */
+    private record Section(String key, String name, String about, List<String> ids) {
+    }
+
+    private static final List<Section> SECTIONS = List.of(
+            new Section("name", "Name & lore", "The name and the lines under it", List.of("minecraft:custom_name", "minecraft:lore", "minecraft:item_name")),
+            new Section("enchant", "Enchantments", "Enchantments and the glint", List.of("minecraft:enchantments", "minecraft:stored_enchantments", "minecraft:enchantment_glint_override")),
+            new Section("attributes", "Attributes", "Attack damage, speed, armour, health... while held or worn", List.of("minecraft:attribute_modifiers")),
+            new Section("potion", "Potion", "Potion type and effects (potions, tipped arrows)", List.of("minecraft:potion_contents", "minecraft:potion_duration_scale")),
+            new Section("durability", "Durability", "Unbreakable, durability and damage", List.of("minecraft:unbreakable", "minecraft:max_damage", "minecraft:damage", "minecraft:repair_cost")),
+            new Section("looks", "Looks & tooltip", "Rarity colour, dye, model, which tooltip lines show", List.of("minecraft:rarity", "minecraft:dyed_color", "minecraft:item_model", "minecraft:tooltip_display", "minecraft:tooltip_style")),
+            new Section("stack", "Stack & use", "Stack size, food, cooldown", List.of("minecraft:max_stack_size", "minecraft:food", "minecraft:consumable", "minecraft:use_cooldown")));
+    /** Components whose cards work while unset (typing or adding a row creates them). */
+    private static final List<String> EDITABLE_UNSET = List.of("minecraft:custom_name", "minecraft:lore", "minecraft:enchantments", "minecraft:potion_contents");
+
+    private boolean simple() {
+        return Session.simpleItems && !Session.outlineView;
+    }
+
+    private Section section() {
+        return SECTIONS.stream().filter(s -> s.key().equals(Session.itemSection)).findFirst().orElse(SECTIONS.getFirst());
+    }
+
+    /** "2 set" style summary for a section button. */
+    private String sectionStatus(Section s) {
+        if (s.key().equals("enchant") && spec.get("minecraft:enchantments") instanceof Nbt.Compound c && !c.isEmpty()) {
+            return c.size() + (c.size() == 1 ? " enchantment" : " enchantments");
+        }
+        long n = s.ids().stream().filter(id -> spec.components().has(id)).count();
+        return n == 0 ? "" : n + " set";
+    }
+
     /** Cards always shown, set or not: name, lore, enchantments, and potion contents on potions. */
     private List<String> pinned() {
         return POTION_ITEMS.contains(spec.id()) ? List.of("minecraft:custom_name", "minecraft:lore", "minecraft:potion_contents", "minecraft:enchantments") : PINNED;
@@ -210,6 +242,33 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
         }))).at(x + 70, y + 18).tip("Browse every item, or take one from your inventory"));
 
         int sy = y + 40;
+        if (simple()) {
+            // The section list replaces the component list.
+            palette.clear();
+            palette.bounds(x, sy + 12, w, bodyBottom() - sy - 12);
+            List<String> known = McItems.componentIds().stream().map(Ids::full).toList();
+            for (Section s : SECTIONS) {
+                if (s.key().equals("potion") && !POTION_ITEMS.contains(spec.id()) && !spec.components().has("minecraft:potion_contents")) {
+                    continue;
+                }
+                if (s.ids().stream().noneMatch(known::contains)) {
+                    continue;
+                }
+                String status = sectionStatus(s);
+                Chip c = Chip.of(s.name() + (status.isEmpty() ? "" : "  · " + status), w, 18, () -> {
+                    Session.itemSection = s.key();
+                    cardScroll = 0;
+                    rememberScroll();
+                    rebuildWidgets();
+                }).left().selected(() -> section().key().equals(s.key())).tip(s.about());
+                palette.add(new WidgetRow(c, 20));
+            }
+            palette.add(new WidgetRow(Chip.of("Everything else…", w, 18, () -> setSimple(false)).left().color(Theme.TEXT_DIM)
+                    .tip("Every component, as the full list (the All view)"), 20));
+            addPaneWidgets(palette);
+            palette.layout();
+            return;
+        }
         searchBox = addRenderableWidget(new EditBox(font, x, sy + 11, w, 14, Component.literal("Search components")));
         searchBox.setHint(Component.literal("search…"));
         searchBox.setValue(search);
@@ -286,8 +345,16 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
 
     private void buildMiddle() {
         int x = midX(), w = midW();
-        addRenderableWidget(Chip.of("Form", 40, 12, () -> setOutlineView(false)).selected(() -> !Session.outlineView)
-                .at(x + w - 82, TOP + 1).tip("One card per component, with forms"));
+        addRenderableWidget(Chip.of("Simple", 40, 12, () -> {
+            Session.outlineView = false;
+            setSimple(true);
+        }).selected(this::simple).at(x + w - 124, TOP + 1).tip("One part at a time: pick Name & lore, Enchantments... on the left"));
+        addRenderableWidget(Chip.of("All", 40, 12, () -> {
+            Session.simpleItems = false;
+            Session.outlineView = true; // forces the rebuild below
+            setOutlineView(false);
+        }).selected(() -> !Session.outlineView && !Session.simpleItems)
+                .at(x + w - 82, TOP + 1).tip("Every component on the item, one card each"));
         addRenderableWidget(Chip.of("Outline", 40, 12, () -> setOutlineView(true)).selected(() -> Session.outlineView)
                 .at(x + w - 40, TOP + 1).tip("All components as one editable outline"));
         cards.clear();
@@ -310,6 +377,26 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
                     return List.of(outlineArea);
                 }
             });
+        } else if (simple()) {
+            outlineArea = null;
+            List<String> known = McItems.componentIds().stream().map(Ids::full).toList();
+            for (String id : section().ids()) {
+                if (!known.contains(id)) {
+                    continue;
+                }
+                ComponentSchema.Info info = SCHEMA.info(id);
+                if (spec.components().has(id) || EDITABLE_UNSET.contains(id)) {
+                    cards.add(ComponentCards.create(info, this));
+                } else {
+                    Chip add = Chip.of("+ " + Ids.pretty(id), 140, 16, () -> {
+                        addComponent(info);
+                        rememberScroll();
+                        rebuildWidgets();
+                    }).left().accent(Theme.group(info.group()));
+                    add.setTooltip(Tooltip.create(Component.literal(info.about().isEmpty() ? id : info.about())));
+                    cards.add(new WidgetRow(add, 20));
+                }
+            }
         } else {
             outlineArea = null;
             if (!spec.removed().isEmpty()) {
@@ -422,6 +509,13 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
         }
     }
 
+    private void setSimple(boolean on) {
+        Session.simpleItems = on;
+        cardScroll = 0;
+        rememberScroll();
+        rebuildWidgets();
+    }
+
     private void setOutlineView(boolean on) {
         if (Session.outlineView == on) {
             return;
@@ -498,7 +592,7 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
 
     @Override
     public boolean isPinned(String id) {
-        return pinned().contains(id);
+        return pinned().contains(id) || simple() && EDITABLE_UNSET.contains(id);
     }
 
     @Override
@@ -590,10 +684,10 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
         g.fill(PAD, TOP + 2, PAD + 32, TOP + 34, 0xFF0D1114);
         g.outline(PAD, TOP + 2, 32, 32, Theme.BORDER);
         ItemView.icon(g, stack.isEmpty() ? null : stack, PAD, TOP + 2, 32);
-        label(g, "Add component", PAD + 1, TOP + 44);
+        label(g, simple() ? "Edit" : "Add component", PAD + 1, TOP + 44);
         // Middle header.
-        String head = Session.outlineView ? "Whole item as outline" : Ids.pretty(spec.id());
-        label(g, font.plainSubstrByWidth(head, midW() - 86), midX() + 1, TOP + 3);
+        String head = Session.outlineView ? "Whole item as outline" : simple() ? section().name() : Ids.pretty(spec.id());
+        label(g, font.plainSubstrByWidth(head, midW() - 128), midX() + 1, TOP + 3);
         // Right: preview.
         int rx = rightX(), rw = rightW();
         label(g, "Preview", rx + 1, TOP + 3);

@@ -445,8 +445,13 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
 
     /** One setting: a label, a box in friendly units (seconds for ticks), and the unit. */
     private record Field(SpawnerSpec.Setting setting, String label, String unit, String help) {
+        /** A time field: stored in ticks, shown in seconds or ticks. */
         boolean seconds() {
             return unit.equals("s");
+        }
+
+        String shown() {
+            return seconds() ? Time.unit() : unit;
         }
     }
 
@@ -458,16 +463,21 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         SettingsCard(String title, int accent, String about, Field... fields) {
             super(title, accent, about);
             this.fields = List.of(fields);
+            if (this.fields.stream().anyMatch(Field::seconds)) {
+                headerButton(Time.buttonLabel(), 50, Time.buttonTip(), () -> {
+                    Time.toggle();
+                    rebuild();
+                });
+            }
             for (Field f : fields) {
                 EditBox box = body(new EditBox(font, 0, 0, 40, 14, Component.literal(f.label())));
                 int v = spawner.get(f.setting());
-                box.setValue(f.seconds() ? trim(v / 20.0) : Integer.toString(v));
+                box.setValue(f.seconds() ? Time.format(v) : Integer.toString(v));
                 box.setTooltip(Tooltip.create(Component.literal(f.help())));
                 box.setResponder(t -> {
                     try {
-                        double d = Double.parseDouble(t.strip());
-                        int ticks = (int) Math.round(f.seconds() ? d * 20 : d);
-                        boolean ok = ticks >= f.setting().min && ticks <= f.setting().max && (f.seconds() || d == Math.rint(d));
+                        int ticks = f.seconds() ? Time.parse(t) : Integer.parseInt(t.strip());
+                        boolean ok = ticks >= f.setting().min && ticks <= f.setting().max;
                         box.setTextColor(ok ? Theme.TEXT : Theme.BAD);
                         if (ok) {
                             spawner.set(f.setting(), ticks);
@@ -479,10 +489,6 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                 });
                 boxes.add(box);
             }
-        }
-
-        private static String trim(double d) {
-            return d == Math.rint(d) ? Long.toString((long) d) : String.format(Locale.ROOT, "%.2f", d).replaceAll("0+$", "");
         }
 
         @Override
@@ -498,7 +504,7 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         private int unitW() {
             int m = 0;
             for (Field f : fields) {
-                m = Math.max(m, font.width(f.unit()));
+                m = Math.max(m, font.width(f.shown()));
             }
             return m == 0 ? 0 : m + 4;
         }
@@ -510,8 +516,8 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                 int ry = y + i * 17;
                 int labelRoom = w - 44 - unitW();
                 g.text(font, font.plainSubstrByWidth(f.label(), labelRoom), x, ry + 3, Theme.TEXT, false);
-                if (!f.unit().isEmpty()) {
-                    g.text(font, f.unit(), x + w - unitW() + 4, ry + 3, Theme.TEXT_DIM, false);
+                if (!f.shown().isEmpty()) {
+                    g.text(font, f.shown(), x + w - unitW() + 4, ry + 3, Theme.TEXT_DIM, false);
                 }
                 boolean def = spawner.get(f.setting()) == f.setting().defaultValue;
                 if (!def && mouseX >= x && mouseX < x + labelRoom && mouseY >= ry && mouseY < ry + 14) {

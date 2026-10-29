@@ -623,6 +623,10 @@ public final class ComponentCards {
 
         PotionCard(ComponentSchema.Info info, Host host) {
             super(info, host);
+            headerButton(io.github.tjhgibbs.stacksmith.client.Time.buttonLabel(), 50, io.github.tjhgibbs.stacksmith.client.Time.buttonTip(), () -> {
+                io.github.tjhgibbs.stacksmith.client.Time.toggle();
+                host.rebuild();
+            });
             Nbt.Compound c = contents();
             List<String> potions = McRegistries.ids("minecraft:potion", host.registries());
             potion = body(new SuggestBox(font, 100, 16, Component.literal("Potion"), () -> potions));
@@ -696,12 +700,12 @@ public final class ComponentCards {
                 });
                 levels.add(level);
                 EditBox duration = body(new EditBox(font, 0, 0, 34, 16, Component.literal("Seconds")));
-                duration.setValue(e.duration() < 0 ? "" : trimSeconds(e.duration() / 20.0));
+                duration.setValue(e.duration() < 0 ? "" : io.github.tjhgibbs.stacksmith.client.Time.format(e.duration()));
                 duration.setHint(Component.literal("∞"));
-                duration.setTooltip(Tooltip.create(Component.literal("Seconds; empty for forever. Tipped arrows give 1/8 of this.")));
+                duration.setTooltip(Tooltip.create(Component.literal(io.github.tjhgibbs.stacksmith.client.Time.unit() + "; empty for forever. Tipped arrows give 1/8 of this.")));
                 duration.setResponder(t -> {
                     try {
-                        int ticks = t.isBlank() ? -1 : (int) Math.round(Double.parseDouble(t.strip()) * 20);
+                        int ticks = t.isBlank() ? -1 : io.github.tjhgibbs.stacksmith.client.Time.parse(t);
                         duration.setTextColor(Theme.TEXT);
                         EntitySpec.Effect x = effects.get(index);
                         update(index, new EntitySpec.Effect(x.id(), x.amplifier(), ticks, x.ambient(), x.particles(), x.icon()));
@@ -728,10 +732,6 @@ public final class ComponentCards {
             String base = c.getString("potion", "");
             status = (base.isEmpty() ? "" : Ids.pretty(base)) + (effects.isEmpty() ? "" : (base.isEmpty() ? "" : " + ") + effects.size() + (effects.size() == 1 ? " effect" : " effects"));
             statusColor = Theme.TEXT_DIM;
-        }
-
-        private static String trimSeconds(double d) {
-            return d == Math.rint(d) ? Long.toString((long) d) : Double.toString(d);
         }
 
         /** The value as a compound (the game also accepts a bare potion id). */

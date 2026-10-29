@@ -879,6 +879,10 @@ public final class MobEditorScreen extends StacksmithScreen {
 
         EffectsCard(EntitySpec mob) {
             super("Effects", 0xFFC79BF2, "Status effects the mob spawns with. Leave the duration empty for forever.");
+            headerButton(Time.buttonLabel(), 50, Time.buttonTip(), () -> {
+                Time.toggle();
+                rebuild();
+            });
             List<String> all = McRegistries.ids("minecraft:mob_effect", Delivery.registries());
             List<EntitySpec.Effect> effects = new ArrayList<>(mob.effects());
             for (int i = 0; i < effects.size(); i++) {
@@ -914,12 +918,12 @@ public final class MobEditorScreen extends StacksmithScreen {
                 });
                 levels.add(level);
                 EditBox duration = body(new EditBox(font, 0, 0, 34, 16, Component.literal("Seconds")));
-                duration.setValue(e.duration() < 0 ? "" : NumberText.trim(e.duration() / 20.0));
+                duration.setValue(e.duration() < 0 ? "" : Time.format(e.duration()));
                 duration.setHint(Component.literal("∞"));
-                duration.setTooltip(Tooltip.create(Component.literal("Duration in seconds; empty for forever")));
+                duration.setTooltip(Tooltip.create(Component.literal("Duration in " + (Session.ticks ? "ticks" : "seconds") + "; empty for forever")));
                 duration.setResponder(t -> {
                     try {
-                        int ticks = t.isBlank() ? -1 : (int) Math.round(Double.parseDouble(t.strip()) * 20);
+                        int ticks = t.isBlank() ? -1 : Time.parse(t);
                         duration.setTextColor(Theme.TEXT);
                         EntitySpec.Effect c = effects.get(index);
                         update(mob, effects, index, new EntitySpec.Effect(c.id(), c.amplifier(), ticks, c.ambient(), c.particles(), c.icon()));
