@@ -84,7 +84,16 @@ Check, in this order:
   Command:"setblock ~ ~ ~ spawner{...}",auto:true}]`. When placed by an op it runs once
   immediately and replaces itself with the spawner.
 
-## 4. Backlog
+## 4. Decisions from the owner (2026-10-29)
+
+- "Item tags" means item data: components, including `custom_data`. Not datapack tags.
+- The owner is usually an operator on the servers they play, so spawners, command blocks and
+  `/setblock` are the main outputs. Don't spend effort on non-op workarounds.
+- Keep the name Stacksmith, the J key and the dark flat panel style.
+- After the in-game check, build in this order: **more item forms**, then **mob-specific
+  fields**, then **saved presets**. Other blocks (trial spawners, chests...) come later.
+
+## 5. Backlog
 
 - Dedicated forms for more components: attribute modifiers (attribute / amount / operation
   / slot rows), potion contents and effects, tool rules, food and consumable, equippable,
