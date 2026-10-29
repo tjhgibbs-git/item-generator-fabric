@@ -76,11 +76,6 @@ components:
     editor: id
     about: Tooltip background and frame sprites from a resource pack.
     default: minecraft:custom
-  map_color:
-    group: map
-    editor: color
-    about: Colour of the filled map item's markings.
-    default: 4603950
   # ---- enchanting -----------------------------------------------------------------------------
   enchantments:
     group: enchanting
@@ -176,7 +171,7 @@ components:
     about: Saves the holder from death like a totem, with these effects.
     default:
       death_effects:
-        - type: clear_all_status_effects
+        - type: clear_all_effects
   # ---- tools ----------------------------------------------------------------------------------
   tool:
     group: tool

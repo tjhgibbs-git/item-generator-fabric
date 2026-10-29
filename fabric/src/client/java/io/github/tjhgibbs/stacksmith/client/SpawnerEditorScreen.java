@@ -470,22 +470,24 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                 }
             });
             type.setTooltip(Tooltip.create(Component.literal("Mob type: type to search")));
-            weight = body(new EditBox(font, 0, 0, 30, 16, Component.literal("Weight")));
-            weight.setValue(Integer.toString(entry().weight));
-            weight.setTooltip(Tooltip.create(Component.literal("Weight in the pool: how often this one is picked compared with the others")));
-            weight.setResponder(s -> {
-                try {
-                    int v = Integer.parseInt(s.strip());
-                    weight.setTextColor(v >= 1 ? Theme.TEXT : Theme.BAD);
-                    if (v >= 1) {
-                        entry().weight = v;
-                        changed();
+            // Only a pool has weights (the pane controls visibility, so leave it out entirely).
+            weight = spawner.entries().size() > 1 ? body(new EditBox(font, 0, 0, 30, 16, Component.literal("Weight"))) : null;
+            if (weight != null) {
+                weight.setValue(Integer.toString(entry().weight));
+                weight.setTooltip(Tooltip.create(Component.literal("Weight in the pool: how often this one is picked compared with the others")));
+                weight.setResponder(s -> {
+                    try {
+                        int v = Integer.parseInt(s.strip());
+                        weight.setTextColor(v >= 1 ? Theme.TEXT : Theme.BAD);
+                        if (v >= 1) {
+                            entry().weight = v;
+                            changed();
+                        }
+                    } catch (NumberFormatException e) {
+                        weight.setTextColor(Theme.BAD);
                     }
-                } catch (NumberFormatException e) {
-                    weight.setTextColor(Theme.BAD);
-                }
-            });
-            weight.visible = spawner.entries().size() > 1;
+                });
+            }
             Nbt n = mob.data().get(EntitySpec.Keys.CUSTOM_NAME);
             String markup = n == null ? "" : TextMarkup.fromComponent(n);
             name = body(new EditBox(font, 0, 0, 100, 16, Component.literal("Name")));
@@ -507,12 +509,14 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
 
         @Override
         protected int layoutBody(int x, int y, int w) {
-            boolean pool = spawner.entries().size() > 1;
+            boolean pool = weight != null;
             type.setX(x);
             type.setY(y);
             type.setWidth(pool ? w - 34 : w);
-            weight.setX(x + w - 30);
-            weight.setY(y);
+            if (pool) {
+                weight.setX(x + w - 30);
+                weight.setY(y);
+            }
             name.setX(x);
             name.setY(y + 20);
             name.setWidth(w);
