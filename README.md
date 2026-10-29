@@ -13,13 +13,21 @@ Client-side only. It generates items and commands; the server needs nothing inst
 | Part | State |
 |---|---|
 | `core/`: SNBT, outline format, item/mob/spawner model, commands, import, text codes, text editor model, component schema | JUnit tests green (`./gradlew :core:test -PcoreOnly`) |
-| `fabric/`: bridges, screens, delivery, GameTests | Builds on 26.3 / Fabric API 0.165.0 and the 6 server GameTests pass in CI (items, SNBT, schema defaults, mob data, spawners). **The screens have not been opened in a client yet.** See [docs/HANDOFF.md](docs/HANDOFF.md). |
+| `fabric/`: bridges, screens, delivery, GameTests | Builds on 26.3 / Fabric API 0.165.0; the 8 server GameTests pass (items, SNBT, schema defaults, mob data, every mob-specific field, spawners by `/setblock` and saved in steps). Every screen has been used in a live client. See [docs/HANDOFF.md](docs/HANDOFF.md). |
 
 ## Using it
 
-Press **J** (rebindable). Two tabs: **Item** and **Spawner**. **Import…** (top right) brings in
-the item you're holding, the spawner you're looking at, or any pasted `/give`, `/setblock`,
-`/summon`, `/item replace`, bare item (`diamond_sword[...]`) or saved item data.
+Press **J** (rebindable). Three tabs: **Item**, **Spawner** and **Mob**.
+
+**Look at a spawner and press J** to edit that spawner: the Spawner tab opens on it, and
+**Save to this spawner** writes your changes back to the same block. That is the main way
+in: block → spawner → mob (**Edit mob…** opens the full mob editor for each mob in it).
+
+**Import…** (top right) brings in the item you're holding, the spawner you're looking at, or
+any pasted `/give`, `/setblock`, `/summon`, `/item replace`, bare item (`diamond_sword[...]`)
+or saved item data. **Saved…** saves what you're editing under a name, or loads one back
+(files in `config/stacksmith/items|mobs|spawners/`, one SNBT file each). It works in nested
+editors too, e.g. load a saved mob into a spawner's **Edit mob…**.
 
 ### Item tab
 
@@ -28,8 +36,10 @@ the item you're holding, the spawner you're looking at, or any pasted `/give`, `
   searchable. Hover for what each does. Items' built-in components are marked `•`;
   shift-click one to *remove* it from the item (`!name`).
 - **Middle:** one card per component. Forms where they help:
-  - names and lore: one line of text with `&` codes (`&6&lGold &rplain`, `&#ff8800`), no
-    JSON. Italic is turned off for you (use `&o` to want it);
+  - **Name, Lore and Enchantments** are always at the top. Names and lore have three views
+    of the same text: **Styled** (as it looks on the item, with a colour/style toolbar and
+    Ctrl+B/I/U; the `&` codes show dimmed only on the line you're editing), **JSON**, and
+    **Outline**. Italic is turned off for you (use `&o` to want it);
   - enchantments: name + level rows with search; numbers, switches, choices, colours with
     dye swatches, registry ids with a dropdown;
   - everything else: the **outline** editor (below).
@@ -68,18 +78,42 @@ tags: [legendary, bound]
 
 ### Spawner tab
 
-- **Left:** timing and ranges (with the defaults explained), and the spawn pool: one mob, or
-  several with weights.
-- **Middle:** the selected mob: type, name (with `&` codes), equipment (pick or fully edit
-  the item in each slot, drop chance per slot), behaviour switches (never despawn, no AI,
-  silent, glowing...), health and common attributes, and **All data** as an outline for
-  everything else (effects, passengers, `IsBaby`, `powered`...).
-- **Right:** the mob, rendered wearing and holding its gear (it follows the mouse), and:
+- **Left:** the spawn pool: one mob, or several with weights. **+ Add mob** opens the mob
+  editor for the new one.
+- **Middle:** the selected mob at a glance with **Edit mob…** (the full Mob editor, nested,
+  with **Use mob** / **Cancel**), then the settings in plain words, seconds and blocks
+  ("Wait at least 10 s", "Runs with a player within 16 blocks").
+- **Right:** the mob, rendered wearing its gear, and:
+  - **Save to this spawner** (when the tab is tied to a block) or **Place where I look**
+    (replaces a spawner you're looking at, otherwise places against the face; the tab is then
+    tied to that block). Spawners too long for one chat command are sent in steps: the data
+    is built in command storage piece by piece, then copied onto a fresh spawner at once;
   - **Get spawner**: a spawner item that places this spawner;
   - **Get command block**: a command block that turns itself into the spawner when placed
-    (always active, no redstone);
-  - **Place where I look**: runs the `/setblock` (if short enough for chat);
-  - **Copy /setblock**, **Copy /summon**.
+    (always active, no redstone, no 256-character limit);
+  - **Copy /setblock**.
+
+### Mob tab
+
+- **Left:** every mob, grouped (Hostile, Animals, Water, Other mobs, Objects), with spawn-egg
+  icons and search.
+- **Middle:** name (the same styled editor), **<mob> options** for what only that kind of
+  mob has (baby, never grows up, slime size, sheep wool, villager profession / level / biome,
+  cat/wolf/frog/pig/cow/chicken variants, horse and llama coats, charged creeper and fuse,
+  rabbit type, panda genes, armour stand arms/size...), equipment ("Head: Diamond Helmet" rows
+  with drop %), behaviour switches, stats, effects, and **All data** as an outline.
+- **Right:** the live preview, **Get spawn egg**, **Summon here**, **Get command block**
+  (summons the mob on top of itself when placed: for mobs too long for chat or with no egg),
+  **Put in a spawner →** and **Copy /summon**.
+
+Mob-specific fields come from `core/src/main/resources/stacksmith/schema/entities.outline`;
+a GameTest loads every field into every mob it lists and checks the game keeps it.
+
+### Long commands
+
+Chat takes 256 characters. Every tab can always **Copy** its command, and has a way round
+the limit: **Get item** (any size, creative), **Get command block** on the Spawner and Mob
+tabs, and the spawner's stepwise save.
 
 ### Servers
 
@@ -108,7 +142,9 @@ core/     pure Java, no Minecraft
   command/   Commands (give, setblock, summon, spawner and command-block items), Importer
   text/      TextMarkup (&-codes <-> text components)
   edit/      TextModel (the code editor's text, caret, undo)
-  schema/    ComponentSchema, loaded from resources/stacksmith/schema/components.outline
+  schema/    ComponentSchema and EntitySchema, loaded from resources/stacksmith/schema/
+             components.outline and entities.outline
+  preset/    Presets (saved items, mobs, spawners as SNBT files)
 fabric/   the mod
   main/      Mc* bridges (the only code touching game classes outside the GUI)
   client/    screens, widgets, Delivery

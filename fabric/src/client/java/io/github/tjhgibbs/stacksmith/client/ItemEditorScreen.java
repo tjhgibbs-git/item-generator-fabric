@@ -11,6 +11,7 @@ import io.github.tjhgibbs.stacksmith.client.ui.Theme;
 import io.github.tjhgibbs.stacksmith.core.Ids;
 import io.github.tjhgibbs.stacksmith.core.command.Commands;
 import io.github.tjhgibbs.stacksmith.core.item.ItemSpec;
+import io.github.tjhgibbs.stacksmith.core.preset.Presets;
 import io.github.tjhgibbs.stacksmith.core.nbt.Nbt;
 import io.github.tjhgibbs.stacksmith.core.nbt.SnbtException;
 import io.github.tjhgibbs.stacksmith.core.outline.Outline;
@@ -144,7 +145,16 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
 
     private void buildHeader() {
         header(onDone == null ? Tab.ITEM : null, "Held item, inventory, or a pasted /give, /setblock or /summon",
-                () -> minecraft.setScreenAndShow(new ImportScreen(this, this::importItem)));
+                () -> minecraft.setScreenAndShow(new ImportScreen(this, this::importItem)),
+                () -> minecraft.setScreenAndShow(new PresetsScreen(this, Presets.Kind.ITEM, spec.toTag(), data -> {
+                    ItemSpec loaded = ItemSpec.fromTag(data);
+                    if (onDone == null) {
+                        Session.item = loaded;
+                        minecraft.setScreenAndShow(new ItemEditorScreen(parent));
+                    } else {
+                        minecraft.setScreenAndShow(new ItemEditorScreen(parent, loaded, onDone));
+                    }
+                })));
     }
 
     private void buildLeft() {

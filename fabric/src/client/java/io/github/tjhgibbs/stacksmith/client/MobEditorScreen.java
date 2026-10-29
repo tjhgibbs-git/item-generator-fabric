@@ -17,6 +17,7 @@ import io.github.tjhgibbs.stacksmith.core.item.ItemSpec;
 import io.github.tjhgibbs.stacksmith.core.nbt.Nbt;
 import io.github.tjhgibbs.stacksmith.core.nbt.SnbtException;
 import io.github.tjhgibbs.stacksmith.core.outline.Outline;
+import io.github.tjhgibbs.stacksmith.core.preset.Presets;
 import io.github.tjhgibbs.stacksmith.core.schema.EntitySchema;
 import io.github.tjhgibbs.stacksmith.core.text.TextMarkup;
 import io.github.tjhgibbs.stacksmith.mod.McEntities;
@@ -85,7 +86,7 @@ public final class MobEditorScreen extends StacksmithScreen {
     private boolean dirty = true;
     private long changedAt;
     private EditBox commandBox;
-    private Button getEgg, summonHere, toSpawner;
+    private Button getEgg, summonHere, getCommandBlock, toSpawner;
     private CodeArea allData;
     private int dataVersion, shownDataVersion;
     private final Map<EntitySpec.Slot, ItemStack> slotIcons = new EnumMap<>(EntitySpec.Slot.class);
@@ -135,7 +136,16 @@ public final class MobEditorScreen extends StacksmithScreen {
             entityIds = McEntities.summonableIds();
         }
         header(onDone == null ? Tab.MOB : null, "Paste a /summon, or a spawn egg's /give",
-                () -> minecraft.setScreenAndShow(new ImportScreen(this, null)));
+                () -> minecraft.setScreenAndShow(new ImportScreen(this, null)),
+                () -> minecraft.setScreenAndShow(new PresetsScreen(this, Presets.Kind.MOB, mob.toTag(), data -> {
+                    EntitySpec loaded = EntitySpec.fromTag(data);
+                    if (onDone == null) {
+                        Session.mob = loaded;
+                        minecraft.setScreenAndShow(new MobEditorScreen(parent));
+                    } else {
+                        minecraft.setScreenAndShow(new MobEditorScreen(parent, loaded, onDone));
+                    }
+                })));
         buildList();
         buildMiddle();
         buildRight();
@@ -228,12 +238,15 @@ public final class MobEditorScreen extends StacksmithScreen {
 
     private void buildRight() {
         int x = rightX(), w = rightW();
-        int y = bodyBottom() - (onDone == null ? 3 : 0) * 22 - 22 + 2;
+        int y = bodyBottom() - (onDone == null ? 4 : 0) * 22 - 22 + 2;
         if (onDone == null) {
             getEgg = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.get_egg"), b -> giveEgg())
                     .bounds(x, y, w, 20).build());
             summonHere = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.summon"), b ->
                     toast(Delivery.run(Commands.summon(mob, "~ ~ ~", style())), true)).bounds(x, y + 22, w, 20).build());
+            getCommandBlock = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.get_command_block"), b -> giveCommandBlock())
+                    .bounds(x, y + 44, w, 20).build());
+            y += 22;
             toSpawner = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.to_spawner"), b -> {
                 WorldSpawner.link(new SpawnerSpec(mob.copy()), null);
                 minecraft.setScreenAndShow(new SpawnerEditorScreen(parent));
@@ -264,6 +277,16 @@ public final class MobEditorScreen extends StacksmithScreen {
 
     private Commands.Style style() {
         return new Commands.Style(Session.briefCommands, Session.target);
+    }
+
+    /** A command block that summons this mob on top of itself once, when placed: no chat limit. */
+    private void giveCommandBlock() {
+        String summon = Commands.summon(mob, "~ ~1 ~", style());
+        Nbt name = mob.data().get(EntitySpec.Keys.CUSTOM_NAME);
+        String label = name != null && TextMarkup.fromComponent(name) != null ? TextMarkup.plain(TextMarkup.fromComponent(name)) : Ids.pretty(mob.id());
+        ItemSpec cb = Commands.commandBlockItem(summon, TextMarkup.toComponent("&d" + label + " (place to summon)", true));
+        McItems.Result r = McItems.toStack(cb, Delivery.registries());
+        toast(r.ok() ? Delivery.giveCreative(r.stack()) : Component.literal(r.error()), r.ok() && Delivery.isCreative());
     }
 
     private void giveEgg() {
@@ -337,6 +360,8 @@ public final class MobEditorScreen extends StacksmithScreen {
                     : creative ? "stacksmith.tooltip.get_egg" : "stacksmith.tooltip.get_creative")));
             boolean fits = command.length() + 1 <= Commands.CHAT_LIMIT, can = Delivery.canUse("summon");
             summonHere.active = fits && can && preview != null;
+            getCommandBlock.active = creative && command.length() <= Commands.COMMAND_BLOCK_LIMIT;
+            getCommandBlock.setTooltip(Tooltip.create(Component.translatable(creative ? "stacksmith.tooltip.get_command_block_mob" : "stacksmith.tooltip.get_creative")));
             summonHere.setTooltip(Tooltip.create(Component.translatable(!can ? "stacksmith.tooltip.summon_no_permission"
                     : !fits ? "stacksmith.tooltip.summon_too_long" : "stacksmith.tooltip.summon")));
         }
@@ -355,7 +380,7 @@ public final class MobEditorScreen extends StacksmithScreen {
         int rx = rightX(), rw = rightW();
         label(g, "Preview", rx + 1, TOP + 2);
         int py = TOP + 14;
-        int buttons = onDone == null ? 4 : 1;
+        int buttons = onDone == null ? 5 : 1;
         int ph = bodyBottom() - buttons * 22 - py - 16;
         MobPreview.draw(g, font, preview, rx, py, rw, ph, mouseX, mouseY);
         int y = py + ph + 4;

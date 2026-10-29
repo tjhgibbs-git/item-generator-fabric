@@ -15,6 +15,7 @@ import io.github.tjhgibbs.stacksmith.core.item.ItemSpec;
 import io.github.tjhgibbs.stacksmith.core.nbt.Nbt;
 import io.github.tjhgibbs.stacksmith.core.nbt.SnbtException;
 import io.github.tjhgibbs.stacksmith.core.outline.Outline;
+import io.github.tjhgibbs.stacksmith.core.preset.Presets;
 import io.github.tjhgibbs.stacksmith.core.text.TextMarkup;
 import io.github.tjhgibbs.stacksmith.mod.McEntities;
 import io.github.tjhgibbs.stacksmith.mod.McItems;
@@ -67,6 +68,8 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     private long changedAt;
     private EditBox commandBox;
     private Button getSpawner, getCommandBlock, placeHere, copySetblock;
+    /** Left edge of the looked-at chip; the title is left out when it would run into it. */
+    private int loadChipX;
     private final Map<EntitySpec.Slot, ItemStack> slotIcons = new EnumMap<>(EntitySpec.Slot.class);
 
     public SpawnerEditorScreen(Screen parent) {
@@ -116,19 +119,25 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     protected void init() {
         SuggestBox.closeAll();
         header(Tab.SPAWNER, "Look at a spawner, or paste a /setblock, /summon or spawner /give",
-                () -> minecraft.setScreenAndShow(new ImportScreen(this, null)));
+                () -> minecraft.setScreenAndShow(new ImportScreen(this, null)),
+                () -> minecraft.setScreenAndShow(new PresetsScreen(this, Presets.Kind.SPAWNER, spawner.toTag(), data -> {
+                    // Stays tied to the block it was editing, so Save puts the loaded one there.
+                    WorldSpawner.link(SpawnerSpec.fromTag(data), Session.spawnerPos);
+                    minecraft.setScreenAndShow(new SpawnerEditorScreen(parent));
+                })));
         BlockPos looked = WorldSpawner.lookedAtSpawner();
         // The short label when the full one would run into the title.
         String loadLabel = I18n.get("stacksmith.button.load_looked_at");
-        if (width - PAD - 64 - font.width(loadLabel) - 16 < (width + font.width(title)) / 2 + 4) {
+        if (width - PAD - HEADER_RIGHT - 4 - font.width(loadLabel) - 16 < (width + font.width(title)) / 2 + 4) {
             loadLabel = I18n.get("stacksmith.button.load_looked_at_short");
         }
         int lw = font.width(loadLabel) + 16;
         Chip load = addRenderableWidget(Chip.of(loadLabel, lw, 14,
                 () -> WorldSpawner.load(looked, () -> minecraft.setScreenAndShow(new SpawnerEditorScreen(parent))))
-                .at(width - PAD - 60 - 4 - lw, 5)
+                .at(width - PAD - HEADER_RIGHT - 4 - lw, 5)
                 .tip(I18n.get(looked != null ? "stacksmith.tooltip.load_looked_at" : "stacksmith.tooltip.load_looked_at_none")));
         load.active = looked != null && !looked.equals(Session.spawnerPos);
+        loadChipX = load.getX();
         if (Session.spawnerPos != null && !WorldSpawner.exists(Session.spawnerPos)) {
             Session.spawnerPos = null; // broken or out of reach: placing makes a new one
         }
@@ -350,7 +359,9 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
 
     @Override
     protected void extractPanels(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
-        g.centeredText(font, title, width / 2, 8, Theme.TEXT);
+        if ((width + font.width(title)) / 2 + 4 < loadChipX) {
+            g.centeredText(font, title, width / 2, 8, Theme.TEXT);
+        }
         int top = TOP - 2, bottom = bodyBottom() + 2;
         panel(g, PAD - 2, top, leftW() + 4, bottom - top);
         panel(g, midX() - 2, top, midW() + 4, bottom - top);

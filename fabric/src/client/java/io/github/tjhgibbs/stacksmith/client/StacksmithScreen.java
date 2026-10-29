@@ -45,8 +45,11 @@ public abstract class StacksmithScreen extends Screen {
         };
     }
 
-    /** The tab row (top level) and the Import button; nested editors pass {@code null} for no tabs. */
-    protected void header(Tab current, String importTip, Runnable importAction) {
+    /** Width of the header's right-hand buttons (Saved… and Import…), for screens adding more. */
+    protected static final int HEADER_RIGHT = 60 + 4 + 56;
+
+    /** The tab row (top level), Saved… and Import…; nested editors pass {@code null} for no tabs. */
+    protected void header(Tab current, String importTip, Runnable importAction, Runnable savedAction) {
         if (current != null) {
             lastTab = current;
             int x = PAD;
@@ -62,6 +65,10 @@ public abstract class StacksmithScreen extends Screen {
         }
         if (importAction != null) {
             addRenderableWidget(Chip.of("Import…", 60, 14, importAction).at(width - PAD - 60, 5).tip(importTip));
+        }
+        if (savedAction != null) {
+            addRenderableWidget(Chip.of("Saved…", 56, 14, savedAction).at(width - PAD - HEADER_RIGHT, 5)
+                    .tip("Save this under a name, or load one you saved"));
         }
     }
 
