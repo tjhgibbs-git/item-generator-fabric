@@ -69,6 +69,7 @@ public final class ComponentCards {
             case COLOR -> value instanceof Nbt.Num ? new ColorCard(info, host) : new OutlineCard(info, host);
             case ID -> value instanceof Nbt.Str ? new IdCard(info, host) : new OutlineCard(info, host);
             case ENCHANTMENTS -> value instanceof Nbt.Compound ? new EnchantmentsCard(info, host) : new OutlineCard(info, host);
+            case MODIFIERS -> ModifiersCard.fits(value) ? new ModifiersCard(info, host) : new OutlineCard(info, host);
             default -> new OutlineCard(info, host);
         };
         return card;
@@ -486,6 +487,138 @@ public final class ComponentCards {
                 removers.get(i).setX(x + w - 14);
                 removers.get(i).setY(cy);
                 cy += 18;
+            }
+            add.setX(x);
+            add.setY(cy);
+            return cy - y + 14;
+        }
+    }
+
+    // ---- attribute modifiers ----------------------------------------------------------------
+
+    /** Rows of attribute / amount / operation / slot. Modifiers with extra fields fall back to the outline. */
+    static final class ModifiersCard extends ComponentCard {
+        static final List<String> OPERATIONS = List.of("add_value", "add_multiplied_base", "add_multiplied_total");
+        static final List<String> OPERATION_LABELS = List.of("+ amount", "+ % of base", "× total");
+        static final List<String> SLOTS = List.of("any", "mainhand", "offhand", "hand", "head", "chest", "legs", "feet", "armor", "body", "saddle");
+        private static final java.util.Set<String> FIELDS = java.util.Set.of("type", "id", "amount", "operation", "slot");
+
+        private final List<SuggestBox> types = new ArrayList<>();
+        private final List<EditBox> amounts = new ArrayList<>();
+        private final List<Chip> ops = new ArrayList<>(), slots = new ArrayList<>(), removers = new ArrayList<>();
+        private final Chip add;
+
+        static boolean fits(Nbt v) {
+            if (!(v instanceof Nbt.List l)) {
+                return false;
+            }
+            for (Nbt n : l.items()) {
+                if (!(n instanceof Nbt.Compound c) || !FIELDS.containsAll(c.keys())) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        ModifiersCard(ComponentSchema.Info info, Host host) {
+            super(info, host);
+            List<String> attributes = McRegistries.ids("minecraft:attribute", host.registries());
+            Nbt.List list = (Nbt.List) value();
+            for (int i = 0; i < list.size(); i++) {
+                Nbt.Compound m = (Nbt.Compound) list.get(i);
+                SuggestBox type = body(new SuggestBox(font, 100, 16, Component.literal("Attribute"), () -> attributes));
+                type.setValueQuietly(Ids.brief(m.getString("type", "minecraft:attack_damage")));
+                type.onAccept(s -> {
+                    String full = Ids.full(s);
+                    boolean ok = attributes.isEmpty() || attributes.contains(full);
+                    type.setTextColor(ok ? Theme.TEXT : Theme.WARN);
+                    if (ok) {
+                        m.put("type", full);
+                        host.changed();
+                    }
+                });
+                types.add(type);
+                EditBox amount = body(new EditBox(font, 0, 0, 40, 16, Component.literal("Amount")));
+                amount.setValue(NumberCard.trim(m.getDouble("amount", 0)));
+                amount.setTooltip(Tooltip.create(Component.literal("Amount. For the % operations, 0.5 means +50%.")));
+                amount.setResponder(s -> {
+                    try {
+                        m.put("amount", Nbt.d(Double.parseDouble(s.strip())));
+                        amount.setTextColor(Theme.TEXT);
+                        host.changed();
+                    } catch (NumberFormatException e) {
+                        amount.setTextColor(Theme.BAD);
+                    }
+                });
+                amounts.add(amount);
+                ops.add(body(cycle(m, "operation", OPERATIONS, OPERATION_LABELS, "add_value",
+                        "How the amount applies: added, as a share of the base value, or multiplying the total")));
+                slots.add(body(cycle(m, "slot", SLOTS, SLOTS, "any", "Where the item must be for this to apply")));
+                if (!m.has("id")) {
+                    m.put("id", "stacksmith:" + Ids.brief(m.getString("type", "modifier")).replace('.', '_') + "_" + i);
+                }
+                int index = i;
+                removers.add(body(Chip.of("✕", 14, 16, () -> {
+                    Nbt.List l = (Nbt.List) value();
+                    if (index < l.size()) {
+                        l.remove(index);
+                        host.changed();
+                        host.rebuild();
+                    }
+                }).color(Theme.BAD)));
+            }
+            add = body(Chip.of("+ Add modifier", 90, 14, () -> {
+                Nbt.List l = (Nbt.List) value();
+                l.add(Nbt.compound().put("type", "minecraft:attack_damage").put("id", "stacksmith:modifier_" + l.size())
+                        .put("amount", Nbt.d(1)).put("operation", "add_value").put("slot", "mainhand"));
+                host.changed();
+                host.rebuild();
+            }));
+            status = list.size() == 1 ? "1 modifier" : list.size() + " modifiers";
+        }
+
+        private Chip cycle(Nbt.Compound m, String key, List<String> values, List<String> labels, String fallback, String tip) {
+            String[] current = {m.getString(key, fallback)};
+            Chip[] self = new Chip[1];
+            self[0] = new Chip(Component.literal(label(values, labels, current[0])), 60, 16, in -> {
+                int i = values.indexOf(current[0]);
+                int next = Math.floorMod(i + (in.hasShiftDown() ? -1 : 1), values.size());
+                current[0] = values.get(next);
+                m.put(key, current[0]);
+                self[0].setMessage(Component.literal(labels.get(next)));
+                host.changed();
+            });
+            self[0].setTooltip(Tooltip.create(Component.literal(tip + " (click to change, shift-click back)")));
+            return self[0];
+        }
+
+        private static String label(List<String> values, List<String> labels, String v) {
+            int i = values.indexOf(v);
+            return i >= 0 ? labels.get(i) : v;
+        }
+
+        @Override
+        protected int layoutBody(int x, int y, int w) {
+            int cy = y;
+            boolean wide = w >= 260;
+            for (int i = 0; i < types.size(); i++) {
+                int rest = wide ? w - 16 - 42 - 76 - 62 : w - 16;
+                types.get(i).setX(x);
+                types.get(i).setY(cy);
+                types.get(i).setWidth(Math.max(60, rest));
+                removers.get(i).setX(x + w - 14);
+                removers.get(i).setY(cy);
+                int rx = wide ? x + rest + 2 : x;
+                int ry = wide ? cy : cy + 18;
+                amounts.get(i).setX(rx);
+                amounts.get(i).setY(ry);
+                ops.get(i).setX(rx + 42);
+                ops.get(i).setY(ry);
+                ops.get(i).setWidth(74);
+                slots.get(i).setX(rx + 118);
+                slots.get(i).setY(ry);
+                slots.get(i).setWidth(60);
+                cy += wide ? 18 : 38;
             }
             add.setX(x);
             add.setY(cy);
