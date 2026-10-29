@@ -7,6 +7,7 @@ import io.github.tjhgibbs.stacksmith.client.ui.FormatBar;
 import io.github.tjhgibbs.stacksmith.client.ui.RichTextArea;
 import io.github.tjhgibbs.stacksmith.client.ui.ScrollPane;
 import io.github.tjhgibbs.stacksmith.client.ui.SuggestBox;
+import io.github.tjhgibbs.stacksmith.client.ui.Swatch;
 import io.github.tjhgibbs.stacksmith.client.ui.Theme;
 import io.github.tjhgibbs.stacksmith.core.Ids;
 import io.github.tjhgibbs.stacksmith.core.command.Commands;
@@ -16,11 +17,13 @@ import io.github.tjhgibbs.stacksmith.core.item.ItemSpec;
 import io.github.tjhgibbs.stacksmith.core.nbt.Nbt;
 import io.github.tjhgibbs.stacksmith.core.nbt.SnbtException;
 import io.github.tjhgibbs.stacksmith.core.outline.Outline;
+import io.github.tjhgibbs.stacksmith.core.schema.EntitySchema;
 import io.github.tjhgibbs.stacksmith.core.text.TextMarkup;
 import io.github.tjhgibbs.stacksmith.mod.McEntities;
 import io.github.tjhgibbs.stacksmith.mod.McItems;
 import io.github.tjhgibbs.stacksmith.mod.McRegistries;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.Tooltip;
@@ -68,6 +71,7 @@ public final class MobEditorScreen extends StacksmithScreen {
     private static double listScroll, midScroll;
     private static String search = "";
     private static final Map<String, ItemStack> EGGS = new HashMap<>();
+    private static final EntitySchema SCHEMA = EntitySchema.bundled();
 
     private final EntitySpec mob;
     private final Consumer<EntitySpec> onDone;
@@ -183,6 +187,12 @@ public final class MobEditorScreen extends StacksmithScreen {
             for (String id : ids) {
                 Chip c = Chip.of(Ids.pretty(id), 100, 18, () -> {
                     if (!id.equals(mob.id())) {
+                        // Drop the old type's own fields that the new type doesn't have.
+                        for (EntitySchema.Field f : SCHEMA.fieldsFor(mob.id())) {
+                            if (!f.appliesTo(id) && SCHEMA.fieldsFor(id).stream().noneMatch(g -> g.path().equals(f.path()))) {
+                                f.set(mob, null);
+                            }
+                        }
                         mob.id(id);
                         changed();
                         rebuild();
@@ -203,6 +213,9 @@ public final class MobEditorScreen extends StacksmithScreen {
         mid.clear();
         mid.bounds(midX(), TOP + 14, midW(), bodyBottom() - TOP - 14);
         mid.add(new NameCard(mob));
+        if (!SCHEMA.fieldsFor(mob.id()).isEmpty()) {
+            mid.add(new TypeCard(mob));
+        }
         mid.add(new EquipmentCard(mob));
         mid.add(new FlagsCard(mob));
         mid.add(new StatsCard(mob));
@@ -515,6 +528,172 @@ public final class MobEditorScreen extends StacksmithScreen {
     }
 
     /** On/off behaviour switches. */
+    /** Fields only this kind of mob has (entities.outline): switches, then a row per value. */
+    private final class TypeCard extends Card {
+        private final List<Chip> switches = new ArrayList<>();
+        private final List<EntitySchema.Field> rowFields = new ArrayList<>();
+        private final List<List<AbstractWidget>> rows = new ArrayList<>();
+
+        TypeCard(EntitySpec mob) {
+            super(Ids.pretty(mob.id()) + " options", 0xFFFFC857, "Settings only this kind of mob has");
+            for (EntitySchema.Field f : SCHEMA.fieldsFor(mob.id())) {
+                if (f.editor() == EntitySchema.Editor.BOOL) {
+                    Chip c = body(Chip.of(f.label(), 90, 14, () -> {
+                        f.set(mob, f.isOn(mob) ? null : f.on());
+                        changed();
+                    }).selected(() -> f.isOn(mob)));
+                    if (!f.about().isEmpty()) {
+                        c.tip(f.about());
+                    }
+                    switches.add(c);
+                    continue;
+                }
+                rowFields.add(f);
+                rows.add(switch (f.editor()) {
+                    case NUMBER -> List.of(numberBox(mob, f));
+                    case CHOICE -> List.of(choiceChip(mob, f));
+                    case DYE -> dyeSwatches(mob, f);
+                    case ID -> List.of(idBox(mob, f));
+                    case BOOL -> List.of();
+                });
+            }
+        }
+
+        private EditBox numberBox(EntitySpec mob, EntitySchema.Field f) {
+            EditBox box = body(new EditBox(font, 0, 0, 50, 14, Component.literal(f.label())));
+            Nbt v = f.get(mob);
+            box.setValue(v instanceof Nbt.Num n ? (f.integral() ? Long.toString(n.asLong()) : Double.toString(n.asDouble())) : "");
+            box.setHint(Component.literal("default"));
+            String range = (f.min() > Double.NEGATIVE_INFINITY ? (long) f.min() + " to " + (long) f.max() + ". " : "");
+            box.setTooltip(Tooltip.create(Component.literal(range + f.about())));
+            box.setResponder(t -> {
+                if (t.isBlank()) {
+                    box.setTextColor(Theme.TEXT);
+                    f.set(mob, null);
+                    changed();
+                    return;
+                }
+                try {
+                    double d = Double.parseDouble(t.strip());
+                    boolean ok = d >= f.min() && d <= f.max() && (!f.integral() || d == Math.rint(d));
+                    box.setTextColor(ok ? Theme.TEXT : Theme.BAD);
+                    if (ok) {
+                        f.set(mob, f.number(d));
+                        changed();
+                    }
+                } catch (NumberFormatException e) {
+                    box.setTextColor(Theme.BAD);
+                }
+            });
+            return box;
+        }
+
+        /** Click for the next choice, shift-click for the previous; past the last is "default". */
+        private Chip choiceChip(EntitySpec mob, EntitySchema.Field f) {
+            List<String> labels = new ArrayList<>(f.values().keySet());
+            Chip[] chip = new Chip[1];
+            chip[0] = body(new Chip(Component.literal(choiceText(mob, f)), 90, 14, in -> {
+                String now = f.choiceLabel(mob);
+                int i = now == null ? labels.size() : labels.indexOf(now);
+                int n = labels.size() + 1;
+                int next = ((i + (in.hasShiftDown() ? -1 : 1)) % n + n) % n;
+                f.set(mob, next == labels.size() ? null : f.values().get(labels.get(next)));
+                chip[0].setMessage(Component.literal(choiceText(mob, f)));
+                changed();
+            }));
+            chip[0].tip((f.about().isEmpty() ? "" : f.about() + "\n") + "Click for the next, shift-click for the previous: "
+                    + labels.stream().map(Ids::pretty).collect(java.util.stream.Collectors.joining(", ")));
+            return chip[0];
+        }
+
+        private String choiceText(EntitySpec mob, EntitySchema.Field f) {
+            String l = f.choiceLabel(mob);
+            return l == null ? "default" : Ids.pretty(l);
+        }
+
+        /** The 16 dye colours; clicking the chosen one again goes back to the default. */
+        private List<AbstractWidget> dyeSwatches(EntitySpec mob, EntitySchema.Field f) {
+            List<AbstractWidget> out = new ArrayList<>();
+            for (int i = 0; i < EntitySchema.DYES.size(); i++) {
+                String name = EntitySchema.DYES.get(i);
+                Nbt value = f.values().get(name);
+                int rgb = net.minecraft.world.item.DyeColor.byId(i).getTextureDiffuseColor() & 0xFFFFFF;
+                out.add(body(new Swatch(rgb, Ids.pretty(name), 9, () -> value.equals(f.get(mob)), () -> {
+                    f.set(mob, value.equals(f.get(mob)) ? null : value);
+                    changed();
+                })));
+            }
+            return out;
+        }
+
+        private SuggestBox idBox(EntitySpec mob, EntitySchema.Field f) {
+            List<String> ids = McRegistries.ids(f.registry(), Delivery.registries());
+            SuggestBox box = body(new SuggestBox(font, 100, 14, Component.literal(f.label()), () -> ids));
+            box.setValueQuietly(f.get(mob) instanceof Nbt.Str s ? Ids.brief(s.value()) : "");
+            box.setHint(Component.literal("default"));
+            box.setTooltip(Tooltip.create(Component.literal((f.about().isEmpty() ? "" : f.about() + " ") + "Click for the list, or type to search.")));
+            box.onAccept(t -> {
+                String id = Ids.full(t.strip());
+                boolean known = ids.contains(id);
+                box.setTextColor(t.isBlank() || known ? Theme.TEXT : Theme.BAD);
+                if (t.isBlank() || known) {
+                    f.set(mob, t.isBlank() ? null : Nbt.str(id));
+                    changed();
+                }
+            });
+            return box;
+        }
+
+        private int labelW() {
+            int m = 0;
+            for (EntitySchema.Field f : rowFields) {
+                m = Math.max(m, font.width(f.label()));
+            }
+            return m + 8;
+        }
+
+        @Override
+        protected int layoutBody(int x, int y, int w) {
+            int cols = w >= 200 ? 2 : 1, cw = (w - (cols - 1) * 2) / cols;
+            for (int i = 0; i < switches.size(); i++) {
+                switches.get(i).setWidth(cw);
+                switches.get(i).setX(x + i % cols * (cw + 2));
+                switches.get(i).setY(y + i / cols * 16);
+            }
+            int ry = y + (switches.size() + cols - 1) / cols * 16;
+            int cx = x + labelW(), room = x + w - cx;
+            for (List<AbstractWidget> row : rows) {
+                if (row.size() == 1) {
+                    AbstractWidget wd = row.getFirst();
+                    if (!(wd instanceof EditBox) || wd instanceof SuggestBox) {
+                        wd.setWidth(Math.min(room, 140));
+                    }
+                    wd.setX(cx);
+                    wd.setY(ry);
+                    ry += 16;
+                } else {
+                    // Swatches: as many per line as fit.
+                    int per = Math.max(1, room / 10), i = 0;
+                    for (AbstractWidget sw : row) {
+                        sw.setX(cx + i % per * 10);
+                        sw.setY(ry + 2 + i / per * 10);
+                        i++;
+                    }
+                    ry += (row.size() + per - 1) / per * 10 + 6;
+                }
+            }
+            return ry - y - 2;
+        }
+
+        @Override
+        protected void extractBody(GuiGraphicsExtractor g, int x, int y, int w, int mouseX, int mouseY) {
+            for (int i = 0; i < rowFields.size(); i++) {
+                AbstractWidget first = rows.get(i).getFirst();
+                g.text(font, rowFields.get(i).label(), x, first.getY() + (rows.get(i).size() > 1 ? 1 : 3), Theme.TEXT_DIM, false);
+            }
+        }
+    }
+
     private final class FlagsCard extends Card {
         private final List<Chip> chips = new ArrayList<>();
 

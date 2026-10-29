@@ -18,8 +18,9 @@ final class MobPreview {
         if (preview instanceof LivingEntity living) {
             // Fit the bounding box (with room for a name tag) into the box. Height uses the box's
             // diagonal: wide mobs (guardians, ghasts) tilt toward the mouse and look taller.
-            float bh = Math.max(0.3f, living.getBbHeight()), bw = Math.max(0.3f, living.getBbWidth());
-            float tall = (float) Math.sqrt(bh * bh + bw * bw);
+            // Small mobs (silverfish, babies) are capped so they don't fill the box past its edges.
+            float bh = Math.max(0.3f, living.getBbHeight()), bw = Math.max(0.6f, living.getBbWidth());
+            float tall = Math.max(1.1f, (float) Math.sqrt(bh * bh + bw * bw));
             int size = (int) Math.max(6, Math.min(h * 0.62f / tall, w * 0.55f / bw));
             InventoryScreen.extractEntityInInventoryFollowsMouse(g, x, y, x + w, y + h, size, 0.0625f + yNudge(living), mouseX, mouseY, living);
         } else {

@@ -1,0 +1,331 @@
+# Stacksmith mob fields, written for Minecraft 26.3.
+#
+# Fields that only some mobs have (baby, slime size, villager profession...). The mob editor
+# shows the ones whose "for" list has the mob being edited, in this order. Like
+# components.outline, this file is the only place these save keys live: to support a new
+# Minecraft version, fix keys here. The "everyMobFieldLoadsIntoTheGame" GameTest loads every
+# field into every mob it lists and checks the game keeps it.
+#
+# sets: named lists of mob ids, used in "for" as $name.
+#
+# Fields:
+#   label     what the editor shows
+#   key       where it is saved in the mob's data; dots go into compounds (VillagerData.level)
+#   editor    bool: a switch; writes "on" when set, removes the key when not
+#             number: a box; "type" is byte, short, int or float; min, max
+#             choice: one of "values" (label: saved value), or a list of saved strings
+#             dye: one of the 16 dye colours, saved as a byte 0-15
+#             id: an id from "registry", with suggestions
+#   about     tooltip
+#   for       mob ids (minecraft: may be left out) and $sets
+
+sets:
+  ageable: [armadillo, bee, camel, cat, chicken, cow, donkey, fox, goat, happy_ghast, hoglin, horse, llama, mooshroom, mule, ocelot, panda, pig, polar_bear, rabbit, sheep, skeleton_horse, sniffer, strider, trader_llama, turtle, villager, wolf, zombie_horse, dolphin, squid, glow_squid]
+  zombies: [zombie, husk, drowned, zombie_villager]
+  villagers: [villager, zombie_villager]
+
+fields:
+  # ---- age ------------------------------------------------------------------------------------
+  is_baby:
+    label: Baby
+    key: IsBaby
+    editor: bool
+    on: 1b
+    about: A baby. Small, and for zombies fast.
+    for: [$zombies, piglin, zombified_piglin]
+  age:
+    label: Baby
+    key: Age
+    editor: bool
+    on: -24000
+    about: Starts as a baby and grows up in 20 minutes (unless Never grows up is on).
+    for: [$ageable]
+  age_locked:
+    label: Never grows up
+    key: AgeLocked
+    editor: bool
+    on: 1b
+    about: Keeps its age; a baby stays a baby.
+    for: [$ageable]
+
+  # ---- looks ------------------------------------------------------------------------------------
+  variant:
+    label: Variant
+    key: variant
+    editor: id
+    registry: minecraft:cat_variant
+    about: Coat pattern.
+    for: [cat]
+  wolf_variant:
+    label: Variant
+    key: variant
+    editor: id
+    registry: minecraft:wolf_variant
+    about: Which wolf (pale, woods, ashen...).
+    for: [wolf]
+  frog_variant:
+    label: Variant
+    key: variant
+    editor: id
+    registry: minecraft:frog_variant
+    about: Temperate, warm or cold.
+    for: [frog]
+  pig_variant:
+    label: Variant
+    key: variant
+    editor: id
+    registry: minecraft:pig_variant
+    about: Temperate, warm or cold.
+    for: [pig]
+  cow_variant:
+    label: Variant
+    key: variant
+    editor: id
+    registry: minecraft:cow_variant
+    about: Temperate, warm or cold.
+    for: [cow]
+  chicken_variant:
+    label: Variant
+    key: variant
+    editor: id
+    registry: minecraft:chicken_variant
+    about: Temperate, warm or cold.
+    for: [chicken]
+  horse_coat:
+    label: Coat
+    key: Variant
+    editor: choice
+    values: {white: 0, creamy: 1, chestnut: 2, brown: 3, black: 4, gray: 5, dark_brown: 6}
+    about: Coat colour (no markings).
+    for: [horse]
+  llama_coat:
+    label: Coat
+    key: Variant
+    editor: choice
+    values: {creamy: 0, white: 1, brown: 2, gray: 3}
+    for: [llama, trader_llama]
+  llama_strength:
+    label: Strength
+    key: Strength
+    editor: number
+    type: int
+    min: 1
+    max: 5
+    about: Chest slots (3 per point) and how hard it spits.
+    for: [llama, trader_llama]
+  parrot_variant:
+    label: Colour
+    key: Variant
+    editor: choice
+    values: {red_blue: 0, blue: 1, green: 2, yellow_blue: 3, gray: 4}
+    for: [parrot]
+  axolotl_variant:
+    label: Colour
+    key: Variant
+    editor: choice
+    values: {lucy: 0, wild: 1, gold: 2, cyan: 3, blue: 4}
+    about: Blue is the rare one.
+    for: [axolotl]
+  rabbit_type:
+    label: Type
+    key: RabbitType
+    editor: choice
+    values: {brown: 0, white: 1, black: 2, white_splotched: 3, gold: 4, salt: 5, killer_bunny: 99}
+    about: The killer bunny is hostile.
+    for: [rabbit]
+  fox_type:
+    label: Type
+    key: Type
+    editor: choice
+    values: [red, snow]
+    for: [fox]
+  mooshroom_type:
+    label: Type
+    key: Type
+    editor: choice
+    values: [red, brown]
+    for: [mooshroom]
+  panda_main_gene:
+    label: Personality
+    key: MainGene
+    editor: choice
+    values: [normal, lazy, worried, playful, brown, weak, aggressive]
+    about: The gene it shows. Brown and weak only show when the hidden gene matches.
+    for: [panda]
+  panda_hidden_gene:
+    label: Hidden gene
+    key: HiddenGene
+    editor: choice
+    values: [normal, lazy, worried, playful, brown, weak, aggressive]
+    for: [panda]
+  sheep_color:
+    label: Wool
+    key: Color
+    editor: dye
+    for: [sheep]
+  sheared:
+    label: Sheared
+    key: Sheared
+    editor: bool
+    on: 1b
+    for: [sheep]
+  shulker_color:
+    label: Colour
+    key: Color
+    editor: dye
+    for: [shulker]
+  slime_size:
+    label: Size
+    key: Size
+    editor: number
+    type: int
+    min: 0
+    max: 126
+    about: 0 is the smallest; natural big ones are 3. Bigger means more health and damage.
+    for: [slime, magma_cube]
+  phantom_size:
+    label: Size
+    key: size
+    editor: number
+    type: int
+    min: 0
+    max: 64
+    for: [phantom]
+  puff_state:
+    label: Puffed up
+    key: PuffState
+    editor: choice
+    values: {deflated: 0, half: 1, full: 2}
+    for: [pufferfish]
+  no_pumpkin:
+    label: No pumpkin
+    key: Pumpkin
+    editor: bool
+    on: 0b
+    about: Shows the snow golem's face.
+    for: [snow_golem]
+
+  # ---- villagers ----------------------------------------------------------------------------------
+  profession:
+    label: Profession
+    key: VillagerData.profession
+    editor: id
+    registry: minecraft:villager_profession
+    for: [$villagers]
+  villager_level:
+    label: Level
+    key: VillagerData.level
+    editor: number
+    type: int
+    min: 1
+    max: 5
+    about: Novice 1 to master 5. Higher levels unlock more trades.
+    for: [$villagers]
+  villager_type:
+    label: Biome
+    key: VillagerData.type
+    editor: id
+    registry: minecraft:villager_type
+    about: The outfit (plains, desert, snow...).
+    for: [$villagers]
+
+  # ---- behaviour --------------------------------------------------------------------------------
+  powered:
+    label: Charged
+    key: powered
+    editor: bool
+    on: 1b
+    about: A charged creeper's explosion is twice as big.
+    for: [creeper]
+  fuse:
+    label: Fuse
+    key: Fuse
+    editor: number
+    type: short
+    min: 0
+    max: 32767
+    about: Ticks from hissing to exploding (20 = 1 s). Default 30.
+    for: [creeper]
+  explosion_radius:
+    label: Explosion size
+    key: ExplosionRadius
+    editor: number
+    type: byte
+    min: 0
+    max: 127
+    about: Default 3.
+    for: [creeper]
+  can_break_doors:
+    label: Breaks doors
+    key: CanBreakDoors
+    editor: bool
+    on: 1b
+    for: [$zombies]
+  zombification_immune:
+    label: Safe in overworld
+    key: IsImmuneToZombification
+    editor: bool
+    on: 1b
+    about: Doesn't turn into a zombie variant outside the Nether.
+    for: [piglin, piglin_brute, hoglin]
+  screaming:
+    label: Screaming goat
+    key: IsScreamingGoat
+    editor: bool
+    on: 1b
+    for: [goat]
+  player_created:
+    label: Player-built
+    key: PlayerCreated
+    editor: bool
+    on: 1b
+    about: Won't attack players, like a golem you built.
+    for: [iron_golem]
+  johnny:
+    label: Johnny
+    key: Johnny
+    editor: bool
+    on: 1b
+    about: Attacks every mob nearby, not just players and villagers.
+    for: [vindicator]
+  carried_block:
+    label: Holding
+    key: carriedBlockState
+    editor: id
+    registry: minecraft:block
+    about: The block it carries.
+    for: [enderman]
+
+  # ---- armour stands -----------------------------------------------------------------------------
+  stand_small:
+    label: Small
+    key: Small
+    editor: bool
+    on: 1b
+    for: [armor_stand]
+  stand_arms:
+    label: Arms
+    key: ShowArms
+    editor: bool
+    on: 1b
+    for: [armor_stand]
+  stand_no_plate:
+    label: No base plate
+    key: NoBasePlate
+    editor: bool
+    on: 1b
+    for: [armor_stand]
+  stand_invisible:
+    label: Invisible
+    key: Invisible
+    editor: bool
+    on: 1b
+    about: Only its gear shows.
+    for: [armor_stand]
+  stand_marker:
+    label: Marker
+    key: Marker
+    editor: bool
+    on: 1b
+    about: Tiny hitbox, can't be hit or collided with.
+    for: [armor_stand]

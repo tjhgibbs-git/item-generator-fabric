@@ -65,7 +65,9 @@ public final class SuggestBox extends EditBox {
         matches.clear();
         String q = getValue().strip().toLowerCase(Locale.ROOT);
         List<String> all = source.get();
-        if (!q.isEmpty()) {
+        if (q.isEmpty() && isFocused()) {
+            matches.addAll(all); // an empty box lists everything
+        } else if (!q.isEmpty()) {
             String brief = Ids.brief(q);
             List<String> starts = new ArrayList<>(), contains = new ArrayList<>();
             for (String id : all) {
@@ -98,6 +100,8 @@ public final class SuggestBox extends EditBox {
         super.setFocused(focused);
         if (!focused && open == this) {
             open = null;
+        } else if (focused && getValue().isBlank()) {
+            refresh();
         }
     }
 

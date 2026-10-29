@@ -7,6 +7,7 @@ import io.github.tjhgibbs.stacksmith.core.item.ItemSpec;
 import io.github.tjhgibbs.stacksmith.core.nbt.Nbt;
 import io.github.tjhgibbs.stacksmith.core.nbt.Snbt;
 import io.github.tjhgibbs.stacksmith.core.schema.ComponentSchema;
+import io.github.tjhgibbs.stacksmith.core.schema.EntitySchema;
 import io.github.tjhgibbs.stacksmith.core.text.TextMarkup;
 import io.github.tjhgibbs.stacksmith.mod.McEntities;
 import io.github.tjhgibbs.stacksmith.mod.McItems;
@@ -250,5 +251,67 @@ public class BridgeGameTests {
             return;
         }
         h.succeed();
+    }
+
+    /**
+     * Every field in entities.outline, on every mob it lists: load it into the real mob, save the
+     * mob, and check the value is still there. Catches wrong keys, types and value ranges.
+     */
+    @GameTest(structure = EMPTY_64, maxTicks = 20)
+    public void everyMobFieldLoadsIntoTheGame(GameTestHelper h) {
+        HolderLookup.Provider reg = h.getLevel().registryAccess();
+        EntitySchema schema = EntitySchema.bundled();
+        List<String> wrong = new ArrayList<>();
+        int checked = 0;
+        for (EntitySchema.Field f : schema.all()) {
+            Nbt value = sample(f, reg);
+            if (value == null) {
+                wrong.add(f.name() + ": no sample value (registry " + f.registry() + " empty?)");
+                continue;
+            }
+            for (String id : f.mobs()) {
+                if (!McEntities.isEntity(id)) {
+                    wrong.add(f.name() + ": no entity " + id);
+                    continue;
+                }
+                EntitySpec spec = new EntitySpec(id);
+                f.set(spec, value);
+                Entity e = McEntities.create(spec, h.getLevel());
+                if (e == null) {
+                    wrong.add(f.name() + " on " + id + ": didn't load");
+                    continue;
+                }
+                var out = net.minecraft.world.level.storage.TagValueOutput.createWithContext(net.minecraft.util.ProblemReporter.DISCARDING, reg);
+                e.saveWithoutId(out);
+                EntitySpec back = new EntitySpec(id, McNbt.fromGame(out.buildResult()));
+                Nbt got = f.get(back);
+                boolean same = got != null && (got.equals(value)
+                        || got instanceof Nbt.Num a && value instanceof Nbt.Num b && a.asDouble() == b.asDouble()
+                        || got instanceof Nbt.Str a && value instanceof Nbt.Str b && io.github.tjhgibbs.stacksmith.core.Ids.full(a.value()).equals(io.github.tjhgibbs.stacksmith.core.Ids.full(b.value())));
+                if (!same) {
+                    wrong.add(f.name() + " on " + id + ": sent " + Snbt.write(value) + ", saved " + (got == null ? "nothing" : Snbt.write(got)));
+                }
+                e.discard();
+                checked++;
+            }
+        }
+        if (!wrong.isEmpty()) {
+            h.fail(wrong.size() + " of " + checked + " mob fields wrong:\n  " + String.join("\n  ", wrong));
+            return;
+        }
+        h.succeed();
+    }
+
+    /** A value that isn't the mob's default, so a field the game ignores shows up as missing. */
+    private static Nbt sample(EntitySchema.Field f, HolderLookup.Provider reg) {
+        return switch (f.editor()) {
+            case BOOL -> f.on();
+            case NUMBER -> f.number(Math.min(f.max(), Math.max(f.min(), 2)));
+            case CHOICE, DYE -> f.values().values().stream().reduce((a, b) -> b).orElse(null);
+            case ID -> {
+                List<String> ids = io.github.tjhgibbs.stacksmith.mod.McRegistries.ids(f.registry(), reg);
+                yield ids.isEmpty() ? null : Nbt.str(ids.get(ids.size() / 2));
+            }
+        };
     }
 }
