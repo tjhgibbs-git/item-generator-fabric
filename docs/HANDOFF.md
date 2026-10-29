@@ -28,6 +28,15 @@ Everything below has been used in a live client, with results checked on the ser
   "Saved… → Load → Save to this spawner" puts a saved spawner into the block you looked at.
 - Tests: core JUnit (all green) and 8 server GameTests (`./gradlew :fabric:runGameTest`).
 
+- Later the same day: spawners start empty and default to the classic light rule (Light
+  levels card); potion contents form and skeleton tipped arrows; "Only name & lore";
+  Simple item view; Seconds/Ticks toggle; more mob stats and Reach (weapon `attack_range`,
+  GameTest-checked); Riders stack with ▲ ▼ focus (the editor keeps the root and writes the
+  focused rider's copy back on every change); horse Tame/Temper.
+- **Open issue from the owner:** in their Prism instance (with Axiom, 14erEdit, Lattice, Sylvan)
+  they couldn't type into Name/Lore. Not reproducible in the dev client, no errors in their
+  log; waiting on whether the box takes focus and whether it works without Axiom.
+
 Not checked yet: a dedicated server where you're not op (the non-op warnings), macOS (Cmd vs
 Ctrl in the code area), and very long single strings (a name over ~200 characters can't be
 sent from chat at all; the button says to use Get command block).
@@ -65,19 +74,9 @@ sent from chat at all; the button says to use Get command block).
 - After the in-game check, build in this order: **more item forms**, then **mob-specific
   fields**, then **saved presets**. Other blocks (trial spawners, chests...) come later.
 
-## 5. Backlog
+## 5. Scope
 
-Done since the list was written: mob-specific fields, saved presets, the spawner-first flow.
-
-- Dedicated forms for more components: potion contents and effects, tool rules, food and
-  consumable, equippable, written book pages, firework explosions (colour pickers), banner
-  patterns (with preview), player head profile, container contents (a 27-slot grid that opens
-  nested item editors).
-- More mob fields: horse markings (packed into `Variant` with the coat), tropical fish
-  patterns, cat/wolf collar colours (tame only), armour stand poses with a preview,
-  passengers (stack mobs).
-- Spawner equipment loot tables in the UI (light limits are done: the "Light levels" card).
-- Trial spawners; other block entities (chests with loot, signs, banners, beehives).
-- `/stacksmith` client command (open, import from argument).
-- Undo across rebuilds (snapshot the spec per change).
-- Text editor: autocomplete of component field names from codecs.
+The owner has called the feature set done (2026-10-29): items, mobs and spawners as they are
+now. Further ideas (villager trade forms, armour stand poses, other block entities, more item
+forms) were considered and dropped as bloat; anything not covered by a form is still editable
+as an outline (All data on mobs, the outline card or Outline view on items).

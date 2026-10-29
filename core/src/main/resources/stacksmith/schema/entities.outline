@@ -329,3 +329,21 @@ fields:
     on: 1b
     about: Tiny hitbox, can't be hit or collided with.
     for: [armor_stand]
+
+  # ---- horses and friends -----------------------------------------------------------------------
+  tame:
+    label: Tame
+    key: Tame
+    editor: bool
+    on: 1b
+    about: Tamed: can be ridden and saddled. The saddle goes in Equipment.
+    for: [horse, donkey, mule, llama, trader_llama, skeleton_horse, zombie_horse, camel]
+  temper:
+    label: Temper
+    key: Temper
+    editor: number
+    type: int
+    min: 0
+    max: 100
+    about: How close it is to being tamed (0 to 100).
+    for: [horse, donkey, mule, llama, trader_llama]

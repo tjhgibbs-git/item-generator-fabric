@@ -31,6 +31,17 @@ editors too, e.g. load a saved mob into a spawner's **Edit mob…**.
 
 ### Item tab
 
+Three views (top right of the middle column):
+
+- **Simple** (the default): under the item on the left, a list of sections (Name & lore,
+  Enchantments, Attributes, Potion, Durability, Looks & tooltip, Stack & use); the middle
+  shows only the chosen section, with **+** buttons for what isn't set yet. **Everything
+  else…** switches to All.
+- **All**, described below: every component, one card each.
+- **Outline**: the whole item as one outline.
+
+In the All view:
+
 - **Left:** the item (type to search, or **Pick…** to browse every item or take one from your
   inventory with all its data), the count, and every component you can add, grouped and
   searchable. Hover for what each does. Items' built-in components are marked `•`;
@@ -40,11 +51,14 @@ editors too, e.g. load a saved mob into a spawner's **Edit mob…**.
     of the same text: **Styled** (as it looks on the item, with a colour/style toolbar and
     Ctrl+B/I/U; the `&` codes show dimmed only on the line you're editing), **JSON**, and
     **Outline**. Italic is turned off for you (use `&o` to want it);
-  - enchantments: name + level rows with search; numbers, switches, choices, colours with
-    dye swatches, registry ids with a dropdown;
+  - enchantments: name + level rows with search; attribute modifiers as rows; **Potion
+    contents** (base potion, colour, custom effects; pinned on potions and tipped arrows);
+    numbers, switches, choices, colours with dye swatches, registry ids with a dropdown;
   - everything else: the **outline** editor (below).
   - **Outline** (top right of the column) shows the whole item as one outline instead.
 - **Right:** the item and its real tooltip, live, plus anything the game would reject.
+  **Only name & lore** hides the item's other tooltip lines (attack damage, enchantments,
+  unbreakable...) with `tooltip_display`.
 - **Bottom:** the `/give` with its length (chat takes 256), **Get item**, **Copy /give**,
   **Run**, **Copy data**.
 
@@ -99,17 +113,30 @@ tags: [legendary, bound]
 
 - **Left:** every mob, grouped (Hostile, Animals, Water, Other mobs, Objects), with spawn-egg
   icons and search.
-- **Middle:** name (the same styled editor), **<mob> options** for what only that kind of
-  mob has (baby, never grows up, slime size, sheep wool, villager profession / level / biome,
-  cat/wolf/frog/pig/cow/chicken variants, horse and llama coats, charged creeper and fuse,
-  rabbit type, panda genes, armour stand arms/size...), equipment ("Head: Diamond Helmet" rows
-  with drop %), behaviour switches, stats, effects, and **All data** as an outline.
+- **Middle:**
+  - **Riders**: mobs riding each other (spider jockeys and taller stacks). **+ Add rider** puts
+    one on top; click a row or use ▲ ▼ to choose which mob the cards below edit. Commands
+    always use the whole stack.
+  - Name (the same styled editor) and **<mob> options** for what only that kind of mob has
+    (baby, never grows up, slime size, sheep wool, villager profession / level / biome,
+    cat/wolf/frog/pig/cow/chicken variants, horse and llama coats, tame, charged creeper and
+    fuse, rabbit type, panda genes, armour stand arms/size...).
+  - Equipment ("Head: Diamond Helmet" rows with drop %). On skeletons, strays and bogged the
+    off hand ✎ starts from a tipped arrow (they shoot its effects) and the main hand from a
+    bow: a mob with any custom data doesn't get its usual weapon.
+  - Behaviour switches; **Stats**: health, speed, damage, armour, follow range, **Size
+    (scale)**, attack knockback, armour toughness, step height, jump strength, gravity,
+    reinforcements, and **Reach** (set on the main-hand weapon's `attack_range`).
+  - Effects, and **All data** as an outline for anything else (tags, team, trades...).
 - **Right:** the live preview, **Get spawn egg**, **Summon here**, **Get command block**
   (summons the mob on top of itself when placed: for mobs too long for chat or with no egg),
   **Put in a spawner →** and **Copy /summon**.
 
 Mob-specific fields come from `core/src/main/resources/stacksmith/schema/entities.outline`;
 a GameTest loads every field into every mob it lists and checks the game keeps it.
+
+Times (spawner delays, effect durations) are in seconds; the **Seconds / Ticks** button on
+those cards switches all of them to ticks.
 
 ### Long commands
 

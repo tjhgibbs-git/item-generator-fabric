@@ -90,7 +90,12 @@ public final class MobEditorScreen extends StacksmithScreen {
     /** Mobs that shoot the arrow held in their off hand. */
     private static final List<String> ARCHERS = List.of("minecraft:skeleton", "minecraft:stray", "minecraft:bogged");
 
-    private final EntitySpec mob;
+    /** The whole stack: the bottom mob, with any riders in its Passengers. Commands use this. */
+    private final EntitySpec root;
+    /** The mob the cards edit: the root, or a copy of one rider (written back on every change). */
+    private EntitySpec mob;
+    /** 0 is the bottom mob, 1 the one riding it, and so on. */
+    private int depth;
     private final Consumer<EntitySpec> onDone;
     private final ScrollPane list = pane(new ScrollPane());
     private final ScrollPane mid = pane(new ScrollPane());
@@ -115,7 +120,8 @@ public final class MobEditorScreen extends StacksmithScreen {
     /** A nested editor: edits a copy, and {@code onDone} gets the result if the player keeps it. */
     public MobEditorScreen(Screen parent, EntitySpec mob, Consumer<EntitySpec> onDone) {
         super(Component.translatable("stacksmith.screen.mob"), parent);
-        this.mob = onDone == null ? mob : mob.copy();
+        this.root = onDone == null ? mob : mob.copy();
+        this.mob = root;
         this.onDone = onDone;
     }
 
@@ -153,7 +159,7 @@ public final class MobEditorScreen extends StacksmithScreen {
         }
         header(onDone == null ? Tab.MOB : null, "Paste a /summon, or a spawn egg's /give",
                 () -> minecraft.setScreenAndShow(new ImportScreen(this, null)),
-                () -> minecraft.setScreenAndShow(new PresetsScreen(this, Presets.Kind.MOB, mob.toTag(), data -> {
+                () -> minecraft.setScreenAndShow(new PresetsScreen(this, Presets.Kind.MOB, root.toTag(), data -> {
                     EntitySpec loaded = EntitySpec.fromTag(data);
                     if (onDone == null) {
                         Session.mob = loaded;
@@ -238,6 +244,7 @@ public final class MobEditorScreen extends StacksmithScreen {
     private void buildMiddle() {
         mid.clear();
         mid.bounds(midX(), TOP + 14, midW(), bodyBottom() - TOP - 14);
+        mid.add(new RidersCard());
         mid.add(new NameCard(mob));
         if (!SCHEMA.fieldsFor(mob.id()).isEmpty()) {
             mid.add(new TypeCard(mob));
@@ -259,13 +266,13 @@ public final class MobEditorScreen extends StacksmithScreen {
             getEgg = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.get_egg"), b -> giveEgg())
                     .bounds(x, y, w, 20).build());
             summonHere = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.summon"), b ->
-                    toast(Delivery.run(Commands.summon(mob, "~ ~ ~", style())), true)).bounds(x, y + 22, w, 20).build());
+                    toast(Delivery.run(Commands.summon(root, "~ ~ ~", style())), true)).bounds(x, y + 22, w, 20).build());
             getCommandBlock = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.get_command_block"), b -> giveCommandBlock())
                     .bounds(x, y + 44, w, 20).build());
             y += 22;
             toSpawner = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.to_spawner"), b -> {
                 SpawnerSpec fresh = new SpawnerSpec();
-                fresh.entries().add(new SpawnerSpec.Entry(mob.copy(), 1).classicLight());
+                fresh.entries().add(new SpawnerSpec.Entry(root.copy(), 1).classicLight());
                 WorldSpawner.link(fresh, null);
                 minecraft.setScreenAndShow(new SpawnerEditorScreen(parent));
             }).bounds(x, y + 44, w, 20).tooltip(Tooltip.create(Component.translatable("stacksmith.tooltip.to_spawner"))).build());
@@ -287,7 +294,8 @@ public final class MobEditorScreen extends StacksmithScreen {
         } else {
             addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), b -> onClose()).bounds(width - PAD - 124, y, 60, 20).build());
             addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.use_mob"), b -> {
-                onDone.accept(mob.copy());
+                writeBack();
+                onDone.accept(root.copy());
                 onClose();
             }).bounds(width - PAD - 62, y, 62, 20).build());
         }
@@ -299,22 +307,22 @@ public final class MobEditorScreen extends StacksmithScreen {
 
     /** A command block that summons this mob on top of itself once, when placed: no chat limit. */
     private void giveCommandBlock() {
-        String summon = Commands.summon(mob, "~ ~1 ~", style());
-        Nbt name = mob.data().get(EntitySpec.Keys.CUSTOM_NAME);
-        String label = name != null && TextMarkup.fromComponent(name) != null ? TextMarkup.plain(TextMarkup.fromComponent(name)) : Ids.pretty(mob.id());
+        String summon = Commands.summon(root, "~ ~1 ~", style());
+        Nbt name = root.data().get(EntitySpec.Keys.CUSTOM_NAME);
+        String label = name != null && TextMarkup.fromComponent(name) != null ? TextMarkup.plain(TextMarkup.fromComponent(name)) : Ids.pretty(root.id());
         ItemSpec cb = Commands.commandBlockItem(summon, TextMarkup.toComponent("&d" + label + " (place to summon)", true));
         McItems.Result r = McItems.toStack(cb, Delivery.registries());
         toast(r.ok() ? Delivery.giveCreative(r.stack()) : Component.literal(r.error()), r.ok() && Delivery.isCreative());
     }
 
     private void giveEgg() {
-        String egg = McEntities.spawnEggId(mob.id());
+        String egg = McEntities.spawnEggId(root.id());
         if (egg == null) {
             return;
         }
         ItemSpec item = new ItemSpec(egg);
-        item.set("entity_data", mob.toTag());
-        Nbt name = mob.data().get(EntitySpec.Keys.CUSTOM_NAME);
+        item.set("entity_data", root.toTag());
+        Nbt name = root.data().get(EntitySpec.Keys.CUSTOM_NAME);
         if (name != null) {
             item.set("custom_name", name.copy());
         }
@@ -323,6 +331,7 @@ public final class MobEditorScreen extends StacksmithScreen {
     }
 
     void changed() {
+        writeBack();
         dirty = true;
         dataVersion++;
         changedAt = System.currentTimeMillis();
@@ -350,7 +359,7 @@ public final class MobEditorScreen extends StacksmithScreen {
     }
 
     private void recompute() {
-        command = Commands.summon(mob, "~ ~ ~", style());
+        command = Commands.summon(root, "~ ~ ~", style());
         commandBox.setValue(command);
         commandBox.moveCursorToStart(false);
         if (preview != null) {
@@ -370,9 +379,9 @@ public final class MobEditorScreen extends StacksmithScreen {
             }
         }
         if (onDone == null) {
-            Session.mob = mob;
+            Session.mob = root;
             boolean creative = Delivery.isCreative();
-            boolean hasEgg = McEntities.spawnEggId(mob.id()) != null;
+            boolean hasEgg = McEntities.spawnEggId(root.id()) != null;
             getEgg.active = creative && hasEgg && preview != null;
             getEgg.setTooltip(Tooltip.create(Component.translatable(!hasEgg ? "stacksmith.tooltip.get_egg_none"
                     : creative ? "stacksmith.tooltip.get_egg" : "stacksmith.tooltip.get_creative")));
@@ -394,7 +403,7 @@ public final class MobEditorScreen extends StacksmithScreen {
         panel(g, PAD - 2, top, leftW() + 4, bottom - top);
         panel(g, midX() - 2, top, midW() + 4, bottom - top);
         panel(g, rightX() - 2, top, rightW() + 4, bottom - top);
-        label(g, Ids.pretty(mob.id()), midX() + 1, TOP + 2);
+        label(g, Ids.pretty(mob.id()) + (depth > 0 ? "  (riding " + riderName(depth - 1) + ")" : ""), midX() + 1, TOP + 2);
         int rx = rightX(), rw = rightW();
         label(g, "Preview", rx + 1, TOP + 2);
         int py = TOP + 14;
@@ -426,6 +435,111 @@ public final class MobEditorScreen extends StacksmithScreen {
             preview = null;
         }
         super.removed();
+    }
+
+    // ---- riders ----------------------------------------------------------------------------------
+
+    /** The compound of the mob at {@code d} in the stack (0: the root's data), or null. Riders use Passengers[0]. */
+    private Nbt.Compound stackTag(int d) {
+        Nbt.Compound c = root.data();
+        for (int i = 0; i < d; i++) {
+            if (!(c.getList(EntitySpec.Keys.PASSENGERS) instanceof Nbt.List l) || l.isEmpty() || !(l.get(0) instanceof Nbt.Compound next)) {
+                return null;
+            }
+            c = next;
+        }
+        return c;
+    }
+
+    private int stackSize() {
+        int n = 1;
+        while (stackTag(n) != null) {
+            n++;
+        }
+        return n;
+    }
+
+    private String riderName(int d) {
+        EntitySpec e = d == 0 ? root : EntitySpec.fromTag(stackTag(d).copy());
+        Nbt n = e.data().get(EntitySpec.Keys.CUSTOM_NAME);
+        String markup = n == null ? null : TextMarkup.fromComponent(n);
+        return markup != null && !markup.isBlank() ? TextMarkup.plain(markup) : Ids.pretty(e.id());
+    }
+
+    /** Puts the focused rider's edits back into the stack. */
+    private void writeBack() {
+        if (depth == 0 || stackTag(depth - 1) == null) {
+            return;
+        }
+        Nbt.List riders = stackTag(depth - 1).getList(EntitySpec.Keys.PASSENGERS);
+        if (riders != null && !riders.isEmpty()) {
+            riders.set(0, mob.toTag());
+        }
+    }
+
+    private void focus(int d) {
+        writeBack();
+        depth = Math.max(0, Math.min(d, stackSize() - 1));
+        mob = depth == 0 ? root : EntitySpec.fromTag(stackTag(depth).copy());
+        midScroll = 0;
+        changed();
+        rebuild();
+    }
+
+    /** The stack of mobs riding each other, top first; click one (or ▲ ▼) to edit it below. */
+    private final class RidersCard extends Card {
+        private final List<Chip> rows = new ArrayList<>();
+        private final Chip add, remove;
+
+        RidersCard() {
+            super("Riders", 0xFF9FD0FF, "Mobs riding each other, like a spider jockey. The cards below edit the highlighted one; ▲ ▼ move up and down the stack.");
+            int size = stackSize();
+            headerButton("▼", 16, "Edit the mob below (the one it rides)", () -> focus(depth - 1)).active = depth > 0;
+            headerButton("▲", 16, "Edit the mob riding this one", () -> focus(depth + 1)).active = depth < size - 1;
+            for (int d = size - 1; d >= 0; d--) {
+                int target = d;
+                String where = d == 0 ? (size == 1 ? "" : "  · bottom") : "  · rides " + riderName(d - 1);
+                ItemStack icon = egg(d == 0 ? root.id() : stackTag(d).getString("id", ""));
+                rows.add(body(Chip.of(riderName(d) + where, 100, 16, () -> focus(target)).left().icon(icon).selected(() -> depth == target)));
+            }
+            add = body(Chip.of("+ Add rider", 80, 14, () -> {
+                writeBack();
+                Nbt.Compound top = stackTag(stackSize() - 1);
+                top.childList(EntitySpec.Keys.PASSENGERS).add(new Nbt.Compound().put("id", "minecraft:skeleton"));
+                focus(stackSize() - 1);
+            }).tip("Put another mob on top of the stack (a skeleton to start; pick any type on the left)"));
+            remove = body(Chip.of("✕ Remove this rider", 110, 14, () -> {
+                // Drops the focused rider and everything above it.
+                stackTag(depth - 1).remove(EntitySpec.Keys.PASSENGERS);
+                depth--;
+                mob = depth == 0 ? root : EntitySpec.fromTag(stackTag(depth).copy());
+                changed();
+                rebuild();
+            }).color(Theme.BAD).tip("Remove the highlighted rider (and any riding it)"));
+            remove.active = depth > 0;
+        }
+
+        @Override
+        protected int layoutBody(int x, int y, int w) {
+            int cy = y;
+            if (rows.size() > 1) {
+                for (Chip c : rows) {
+                    c.setX(x);
+                    c.setY(cy);
+                    c.setWidth(w);
+                    cy += 18;
+                }
+            }
+            add.setX(x);
+            add.setY(cy);
+            remove.setX(x + 84);
+            remove.setY(cy);
+            remove.visible = rows.size() > 1;
+            for (Chip c : rows) {
+                c.visible = rows.size() > 1;
+            }
+            return cy - y + 14;
+        }
     }
 
     // ---- cards ------------------------------------------------------------------------------------
