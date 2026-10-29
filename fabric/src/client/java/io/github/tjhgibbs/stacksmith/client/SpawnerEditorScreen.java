@@ -18,6 +18,7 @@ import io.github.tjhgibbs.stacksmith.core.outline.Outline;
 import io.github.tjhgibbs.stacksmith.core.text.TextMarkup;
 import io.github.tjhgibbs.stacksmith.mod.McEntities;
 import io.github.tjhgibbs.stacksmith.mod.McItems;
+import io.github.tjhgibbs.stacksmith.mod.McRegistries;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
@@ -207,6 +208,7 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         mid.add(new EquipmentCard(mob));
         mid.add(new FlagsCard(mob));
         mid.add(new StatsCard(mob));
+        mid.add(new EffectsCard(mob));
         mid.add(new DataCard(mob));
         addPaneWidgets(mid);
         mid.layout();
@@ -730,6 +732,121 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
             for (int i = 0; i < labels.size(); i++) {
                 g.text(font, labels.get(i), x + i % cols * (cw + 6), y + i / cols * 16 + 3, Theme.TEXT_DIM, false);
             }
+        }
+    }
+
+    /** Status effects: effect, level, duration (blank = forever), particles. */
+    private final class EffectsCard extends Card {
+        private final List<SuggestBox> ids = new ArrayList<>();
+        private final List<EditBox> levels = new ArrayList<>(), durations = new ArrayList<>();
+        private final List<Chip> particles = new ArrayList<>(), removers = new ArrayList<>();
+        private final Chip add;
+
+        EffectsCard(EntitySpec mob) {
+            super("Effects", 0xFFC79BF2, "Status effects the mob spawns with. Leave the duration empty for forever.");
+            List<String> all = McRegistries.ids("minecraft:mob_effect", Delivery.registries());
+            List<EntitySpec.Effect> effects = new ArrayList<>(mob.effects());
+            for (int i = 0; i < effects.size(); i++) {
+                int index = i;
+                EntitySpec.Effect e = effects.get(i);
+                SuggestBox id = body(new SuggestBox(font, 100, 16, Component.literal("Effect"), () -> all));
+                id.setValueQuietly(Ids.brief(e.id()));
+                id.onAccept(s -> {
+                    String full = Ids.full(s);
+                    boolean ok = all.isEmpty() || all.contains(full);
+                    id.setTextColor(ok ? Theme.TEXT : Theme.WARN);
+                    if (ok) {
+                        update(mob, effects, index, new EntitySpec.Effect(full, effects.get(index).amplifier(), effects.get(index).duration(),
+                                effects.get(index).ambient(), effects.get(index).particles(), effects.get(index).icon()));
+                    }
+                });
+                ids.add(id);
+                EditBox level = body(new EditBox(font, 0, 0, 26, 16, Component.literal("Level")));
+                level.setValue(Integer.toString(e.amplifier() + 1));
+                level.setTooltip(Tooltip.create(Component.literal("Level (1 is the normal effect)")));
+                level.setResponder(t -> {
+                    try {
+                        int v = Integer.parseInt(t.strip());
+                        boolean ok = v >= 1 && v <= 128;
+                        level.setTextColor(ok ? Theme.TEXT : Theme.BAD);
+                        if (ok) {
+                            EntitySpec.Effect c = effects.get(index);
+                            update(mob, effects, index, new EntitySpec.Effect(c.id(), v - 1, c.duration(), c.ambient(), c.particles(), c.icon()));
+                        }
+                    } catch (NumberFormatException ex) {
+                        level.setTextColor(Theme.BAD);
+                    }
+                });
+                levels.add(level);
+                EditBox duration = body(new EditBox(font, 0, 0, 34, 16, Component.literal("Seconds")));
+                duration.setValue(e.duration() < 0 ? "" : NumberText.trim(e.duration() / 20.0));
+                duration.setHint(Component.literal("∞"));
+                duration.setTooltip(Tooltip.create(Component.literal("Duration in seconds; empty for forever")));
+                duration.setResponder(t -> {
+                    try {
+                        int ticks = t.isBlank() ? -1 : (int) Math.round(Double.parseDouble(t.strip()) * 20);
+                        duration.setTextColor(Theme.TEXT);
+                        EntitySpec.Effect c = effects.get(index);
+                        update(mob, effects, index, new EntitySpec.Effect(c.id(), c.amplifier(), ticks, c.ambient(), c.particles(), c.icon()));
+                    } catch (NumberFormatException ex) {
+                        duration.setTextColor(Theme.BAD);
+                    }
+                });
+                durations.add(duration);
+                particles.add(body(Chip.of("✦", 16, 16, () -> {
+                    EntitySpec.Effect c = effects.get(index);
+                    update(mob, effects, index, new EntitySpec.Effect(c.id(), c.amplifier(), c.duration(), c.ambient(), !c.particles(), c.icon()));
+                }).selected(() -> effects.get(index).particles()).tip("Show particles")));
+                removers.add(body(Chip.of("✕", 14, 16, () -> {
+                    effects.remove(index);
+                    mob.effects(effects);
+                    changed();
+                    rebuild();
+                }).color(Theme.BAD)));
+            }
+            add = body(Chip.of("+ Add effect", 80, 14, () -> {
+                effects.add(new EntitySpec.Effect("minecraft:speed", 0, -1, false, true, true));
+                mob.effects(effects);
+                changed();
+                rebuild();
+            }));
+        }
+
+        private void update(EntitySpec mob, List<EntitySpec.Effect> effects, int index, EntitySpec.Effect e) {
+            effects.set(index, e);
+            mob.effects(effects);
+            changed();
+        }
+
+        @Override
+        protected int layoutBody(int x, int y, int w) {
+            int cy = y;
+            for (int i = 0; i < ids.size(); i++) {
+                int idW = w - 26 - 34 - 16 - 14 - 8;
+                ids.get(i).setX(x);
+                ids.get(i).setY(cy);
+                ids.get(i).setWidth(Math.max(40, idW));
+                int rx = x + Math.max(40, idW) + 2;
+                levels.get(i).setX(rx);
+                levels.get(i).setY(cy);
+                durations.get(i).setX(rx + 28);
+                durations.get(i).setY(cy);
+                particles.get(i).setX(rx + 64);
+                particles.get(i).setY(cy);
+                removers.get(i).setX(x + w - 14);
+                removers.get(i).setY(cy);
+                cy += 18;
+            }
+            add.setX(x);
+            add.setY(cy);
+            return cy - y + 14;
+        }
+    }
+
+    /** Number formatting shared by the cards. */
+    private static final class NumberText {
+        static String trim(double d) {
+            return d == Math.rint(d) ? Long.toString((long) d) : Double.toString(d);
         }
     }
 

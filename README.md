@@ -13,7 +13,7 @@ Client-side only. It generates items and commands; the server needs nothing inst
 | Part | State |
 |---|---|
 | `core/`: SNBT, outline format, item/mob/spawner model, commands, import, text codes, text editor model, component schema | JUnit tests green (`./gradlew :core:test -PcoreOnly`) |
-| `fabric/`: bridges, screens, delivery, GameTests | Written 2026-10-29 in a session without Minecraft; compiled by CI only. **Not yet run in a client.** See [docs/HANDOFF.md](docs/HANDOFF.md). |
+| `fabric/`: bridges, screens, delivery, GameTests | Builds on 26.3 / Fabric API 0.165.0 and the 6 server GameTests pass in CI (items, SNBT, schema defaults, mob data, spawners). **The screens have not been opened in a client yet.** See [docs/HANDOFF.md](docs/HANDOFF.md). |
 
 ## Using it
 

@@ -14,6 +14,9 @@ public final class McText {
 
     /** The component, or null if the game can't read it. */
     public static Component toGame(Nbt component, HolderLookup.Provider registries) {
+        if (component == null || registries == null) {
+            return null;
+        }
         try {
             return ComponentSerialization.CODEC.parse(registries.createSerializationContext(NbtOps.INSTANCE), McNbt.toGame(component))
                     .result().orElse(null);

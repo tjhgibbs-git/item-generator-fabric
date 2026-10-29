@@ -2,8 +2,13 @@
 
 Written 2026-10-29 from a cloud session with JDK 21 and Maven Central, but **no access to
 maven.fabricmc.net or Mojang's servers**, so no Minecraft client. Core was built and tested
-locally. The Fabric module was compiled and GameTested by GitHub Actions only; nobody has
-opened its screens yet.
+locally. The Fabric module was compiled and GameTested by GitHub Actions only (all 6 server
+GameTests pass on 26.3, so the bridges, save formats and schema defaults are right); nobody
+has opened its screens yet.
+
+The session had no Minecraft jars, so it read 26.3 signatures through `.github/api-probe.sh`:
+list classes in `.github/api-probe.txt`, push, and the CI log prints their `javap`. Use the
+same trick for any API question when offline.
 
 ## 1. Next step: run it in a client with block-scraper
 
@@ -38,7 +43,8 @@ Check, in this order:
 5. **Import…**: held item, pasted MCStacker `/give`, pasted spawner `/setblock`, a
    self-running command block's `/give`, and "Spawner I'm looking at".
 6. **Spawner tab**: mob type, name, equipment (Pick from inventory, ✎ nested editor and
-   **Use item** back), drop chances, switches, stats, All data, the pool (+ Add mob, weights,
+   **Use item** back), drop chances, switches, stats, effects (level, seconds or ∞, particles),
+   All data, the pool (+ Add mob, weights,
    ✕), the **live mob preview** wearing its gear, **Get spawner**, **Get command block**
    (place it: it must become the spawner at once), **Place where I look**.
 
@@ -84,6 +90,7 @@ Check, in this order:
   / slot rows), potion contents and effects, tool rules, food and consumable, equippable,
   written book pages, firework explosions (colour pickers), banner patterns (with preview),
   player head profile, container contents (a 27-slot grid that opens nested item editors).
+- Effects on items: potion contents / consumable effects forms (the mob editor has one to reuse).
 - Entity-specific fields in the spawner tab, generated from a second schema
   (`entities.outline`): baby, villager profession/level, slime size, creeper fuse/power,
   horse colours, armour stand poses (with a preview), etc. Passengers editor (stack mobs).

@@ -15,7 +15,7 @@ public final class McRegistries {
     private McRegistries() {
     }
 
-    /** Element ids, sorted; empty if the registry is unknown. */
+    /** Element ids, sorted; empty if the registry is unknown (or there are no registries yet). */
     public static List<String> ids(String registry, HolderLookup.Provider registries) {
         List<String> out = new ArrayList<>();
         lookup(registry, registries).ifPresent(l -> l.listElements().forEach(h -> out.add(h.getRegisteredName())));
@@ -33,7 +33,7 @@ public final class McRegistries {
 
     private static Optional<? extends HolderLookup.RegistryLookup<Object>> lookup(String registry, HolderLookup.Provider registries) {
         Identifier id = Identifier.tryParse(registry);
-        if (id == null) {
+        if (id == null || registries == null) {
             return Optional.empty();
         }
         ResourceKey<? extends Registry<Object>> key = ResourceKey.createRegistryKey(id);
