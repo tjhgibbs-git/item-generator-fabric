@@ -81,8 +81,10 @@ tags: [legendary, bound]
 - **Left:** the spawn pool: one mob, or several with weights. **+ Add mob** opens the mob
   editor for the new one.
 - **Middle:** the selected mob at a glance with **Edit mob…** (the full Mob editor, nested,
-  with **Use mob** / **Cancel**), then the settings in plain words, seconds and blocks
-  ("Wait at least 10 s", "Runs with a player within 16 blocks").
+  with **Use mob** / **Cancel**), its **light levels** (block and sky light ranges; **Any light**
+  lets hostile mobs spawn in daylight, **Normal** restores the usual rule), then the settings in
+  plain words.
+  A new spawner starts empty. Settings are in seconds and blocks ("Wait at least 10 s", "Runs with a player within 16 blocks").
 - **Right:** the mob, rendered wearing its gear, and:
   - **Save to this spawner** (when the tab is tied to a block) or **Place where I look**
     (replaces a spawner you're looking at, otherwise places against the face; the tab is then

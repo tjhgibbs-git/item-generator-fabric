@@ -76,8 +76,7 @@ Done since the list was written: mob-specific fields, saved presets, the spawner
 - More mob fields: horse markings (packed into `Variant` with the coat), tropical fish
   patterns, cat/wolf collar colours (tame only), armour stand poses with a preview,
   passengers (stack mobs).
-- Spawner custom spawn rules (light limits) and equipment loot tables in the UI; core
-  already reads and writes light limits (`SpawnerSpec.Entry.blockLight/skyLight`).
+- Spawner equipment loot tables in the UI (light limits are done: the "Light levels" card).
 - Trial spawners; other block entities (chests with loot, signs, banners, beehives).
 - `/stacksmith` client command (open, import from argument).
 - Undo across rebuilds (snapshot the spec per change).

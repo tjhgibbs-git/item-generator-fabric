@@ -148,18 +148,22 @@ public final class SpawnerSpec {
     public Nbt.Compound toTag() {
         Nbt.Compound c = new Nbt.Compound();
         extra.entries().forEach(e -> c.put(e.getKey(), e.getValue().copy()));
+        // Defaults are left out (the game uses the same ones when a key is missing), which keeps
+        // simple spawners short enough for chat.
         for (Setting s : Setting.values()) {
-            c.put(s.key, Nbt.s(get(s)));
+            if (get(s) != s.defaultValue) {
+                c.put(s.key, Nbt.s(get(s)));
+            }
         }
         if (!entries.isEmpty()) {
+            // The pool is written even for one mob: a spawner placed from an item otherwise
+            // keeps an empty pool, and every route should leave the same data.
             c.put("SpawnData", entries.getFirst().spawnData());
-            if (entries.size() > 1) {
-                Nbt.List pool = new Nbt.List();
-                for (Entry e : entries) {
-                    pool.add(new Nbt.Compound().put("weight", Nbt.i(e.weight)).put("data", e.spawnData()));
-                }
-                c.put("SpawnPotentials", pool);
+            Nbt.List pool = new Nbt.List();
+            for (Entry e : entries) {
+                pool.add(new Nbt.Compound().put("weight", Nbt.i(e.weight)).put("data", e.spawnData()));
             }
+            c.put("SpawnPotentials", pool);
         }
         return c;
     }

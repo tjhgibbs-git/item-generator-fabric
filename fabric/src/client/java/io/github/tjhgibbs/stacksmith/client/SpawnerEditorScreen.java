@@ -76,17 +76,32 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         super(Component.translatable("stacksmith.screen.spawner"), parent);
     }
 
-    private EntitySpec mob() {
+    /** The selected pool entry, or null while the spawner is empty. */
+    private SpawnerSpec.Entry entry() {
         if (spawner.entries().isEmpty()) {
-            spawner.entries().add(new SpawnerSpec.Entry(new EntitySpec("zombie"), 1));
+            return null;
         }
         Session.spawnerEntry = Math.max(0, Math.min(Session.spawnerEntry, spawner.entries().size() - 1));
-        return spawner.entries().get(Session.spawnerEntry).entity;
+        return spawner.entries().get(Session.spawnerEntry);
     }
 
-    private SpawnerSpec.Entry entry() {
-        mob();
-        return spawner.entries().get(Session.spawnerEntry);
+    /** The selected mob, or null while the spawner is empty. */
+    private EntitySpec mob() {
+        SpawnerSpec.Entry e = entry();
+        return e == null ? null : e.entity;
+    }
+
+    /** "Skeleton" (the first mob, which spawns first), or "Empty". */
+    private String spawnerLabel() {
+        return spawner.primary() == null ? "Empty" : Ids.pretty(spawner.primary().id());
+    }
+
+    private void addMob() {
+        minecraft.setScreenAndShow(new MobEditorScreen(this, new EntitySpec("zombie"), result -> {
+            spawner.entries().add(new SpawnerSpec.Entry(result, 1));
+            Session.spawnerEntry = spawner.entries().size() - 1;
+            changed();
+        }));
     }
 
     // ---- layout ------------------------------------------------------------------------------
@@ -176,15 +191,9 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                 changed();
                 rebuild();
             }).color(Theme.BAD).tip("Remove from the spawner");
-            remove.active = pool;
             left.add(new PairRow(pick, remove));
         }
-        left.add(new ItemEditorScreen.WidgetRow(Chip.of("+ Add mob", 80, 16, () ->
-                minecraft.setScreenAndShow(new MobEditorScreen(this, new EntitySpec("zombie"), result -> {
-                    spawner.entries().add(new SpawnerSpec.Entry(result, 1));
-                    Session.spawnerEntry = spawner.entries().size() - 1;
-                    changed();
-                }))).tip("Pick and set up another mob. With several mobs the spawner picks one each time, by weight."), 18));
+        left.add(new ItemEditorScreen.WidgetRow(Chip.of("+ Add mob", 80, 16, this::addMob).tip("Pick and set up another mob. With several mobs the spawner picks one each time, by weight."), 18));
         addPaneWidgets(left);
         left.layout();
         left.scroll(leftScroll);
@@ -198,7 +207,12 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     private void buildMiddle() {
         mid.clear();
         mid.bounds(midX(), TOP + 14, midW(), bodyBottom() - TOP - 14);
-        mid.add(new SelectedMobCard());
+        if (entry() == null) {
+            mid.add(new EmptyCard());
+        } else {
+            mid.add(new SelectedMobCard());
+            mid.add(new LightCard(entry()));
+        }
         mid.add(new SettingsCard("How often", 0xFF8CC8FF, "When the spawner fires. It waits a random time between the two delays after each spawn.",
                 new Field(SpawnerSpec.Setting.DELAY, "First spawn after", "s", "Time from placing until the first spawn. Default 1 s."),
                 new Field(SpawnerSpec.Setting.MIN_DELAY, "Wait at least", "s", "Shortest wait between spawns. Default 10 s."),
@@ -253,7 +267,7 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     // ---- outputs ------------------------------------------------------------------------------
 
     private Nbt spawnerName() {
-        return TextMarkup.toComponent("&e" + Ids.pretty(mob().id()) + " spawner", true);
+        return TextMarkup.toComponent("&e" + spawnerLabel() + " spawner", true);
     }
 
     private void giveSpawner() {
@@ -263,7 +277,7 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
 
     private void giveCommandBlock() {
         String setblock = Commands.setSpawner(spawner, "~ ~ ~", style());
-        ItemSpec cb = Commands.commandBlockItem(setblock, TextMarkup.toComponent("&d" + Ids.pretty(mob().id()) + " spawner (place to build)", true));
+        ItemSpec cb = Commands.commandBlockItem(setblock, TextMarkup.toComponent("&d" + spawnerLabel() + " spawner (place to build)", true));
         McItems.Result r = McItems.toStack(cb, Delivery.registries());
         toast(r.ok() ? Delivery.giveCreative(r.stack()) : Component.literal(r.error()), r.ok());
     }
@@ -329,9 +343,9 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         if (preview != null) {
             preview.discard();
         }
-        preview = minecraft.level != null ? McEntities.create(mob(), minecraft.level) : null;
+        preview = minecraft.level != null && mob() != null ? McEntities.create(mob(), minecraft.level) : null;
         slotIcons.clear();
-        for (EntitySpec.Slot s : EntitySpec.Slot.values()) {
+        for (EntitySpec.Slot s : mob() == null ? new EntitySpec.Slot[0] : EntitySpec.Slot.values()) {
             ItemSpec item = mob().equipment(s);
             if (item != null && Delivery.registries() != null) {
                 McItems.Result r = McItems.toStack(item, Delivery.registries());
@@ -503,6 +517,117 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                 if (!def && mouseX >= x && mouseX < x + labelRoom && mouseY >= ry && mouseY < ry + 14) {
                     g.setTooltipForNextFrame(font, Component.literal(f.help()), mouseX, mouseY);
                 }
+            }
+        }
+    }
+
+    /** Shown while the spawner has nothing in it. */
+    private final class EmptyCard extends Card {
+        private final Chip add;
+
+        EmptyCard() {
+            super("Nothing to spawn yet", 0xFFFF9EC7, "Pick the mob this spawner makes");
+            add = body(Chip.of("+ Add mob", 80, 16, SpawnerEditorScreen.this::addMob).tip("Choose and set up the mob"));
+        }
+
+        @Override
+        protected int layoutBody(int x, int y, int w) {
+            add.setX(x);
+            add.setY(y);
+            return 16;
+        }
+    }
+
+    /**
+     * Light limits for the selected mob (custom_spawn_rules). Empty boxes keep the mob's usual
+     * rule; setting either replaces it, e.g. block light 0 to 15 lets zombies spawn in daylight.
+     */
+    private final class LightCard extends Card {
+        private final SpawnerSpec.Entry entry;
+        private final EditBox[] boxes = new EditBox[4];
+        private static final String[] LABELS = {"Block light", "Sky light"};
+
+        LightCard(SpawnerSpec.Entry entry) {
+            super("Light levels", 0xFFFFE066, "Empty (—): the mob's usual rule (hostile mobs need darkness). When set, the ranges replace it. 0 is dark, 15 is full light.");
+            this.entry = entry;
+            headerButton("Normal", 40, "Clear: the mob's usual light rule", () -> {
+                entry.blockLight = null;
+                entry.skyLight = null;
+                changed();
+                rebuild();
+            });
+            headerButton("Any light", 52, "Spawn in any light, even daylight (0 to 15)", () -> {
+                entry.blockLight = new int[]{0, 15};
+                entry.skyLight = new int[]{0, 15};
+                changed();
+                rebuild();
+            });
+            for (int i = 0; i < 4; i++) {
+                int row = i / 2, end = i % 2;
+                int[] r = row == 0 ? entry.blockLight : entry.skyLight;
+                EditBox b = body(new EditBox(font, 0, 0, 28, 14, Component.literal(LABELS[row] + (end == 0 ? " min" : " max"))));
+                b.setValue(r == null ? "" : Integer.toString(r[end]));
+                b.setHint(Component.literal("—"));
+                b.setTooltip(Tooltip.create(Component.literal(LABELS[row] + (end == 0 ? ": lowest" : ": highest") + " level it spawns at (0-15)")));
+                b.setResponder(t -> apply(row));
+                boxes[i] = b;
+            }
+        }
+
+        /** Reads both boxes of a row: both empty clears it; one empty means 0 or 15. */
+        private void apply(int row) {
+            EditBox lo = boxes[row * 2], hi = boxes[row * 2 + 1];
+            Integer a = parse(lo, 0), b = parse(hi, 15);
+            if (a == null || b == null) {
+                return;
+            }
+            boolean empty = lo.getValue().isBlank() && hi.getValue().isBlank();
+            int[] range = empty ? null : new int[]{a, b};
+            boolean ok = empty || a <= b;
+            lo.setTextColor(ok ? Theme.TEXT : Theme.BAD);
+            hi.setTextColor(ok ? Theme.TEXT : Theme.BAD);
+            if (!ok) {
+                return;
+            }
+            if (row == 0) {
+                entry.blockLight = range;
+            } else {
+                entry.skyLight = range;
+            }
+            changed();
+        }
+
+        /** The box's level, {@code empty} when blank, or null (and red) when not 0-15. */
+        private static Integer parse(EditBox b, int empty) {
+            String t = b.getValue().strip();
+            if (t.isEmpty()) {
+                return empty;
+            }
+            try {
+                int v = Integer.parseInt(t);
+                b.setTextColor(v >= 0 && v <= 15 ? Theme.TEXT : Theme.BAD);
+                return v >= 0 && v <= 15 ? v : null;
+            } catch (NumberFormatException e) {
+                b.setTextColor(Theme.BAD);
+                return null;
+            }
+        }
+
+        @Override
+        protected int layoutBody(int x, int y, int w) {
+            for (int i = 0; i < 4; i++) {
+                boxes[i].setX(x + w - (i % 2 == 0 ? 28 + 22 + 28 : 28));
+                boxes[i].setY(y + i / 2 * 17);
+            }
+            return 2 * 17 - 3;
+        }
+
+        @Override
+        protected void extractBody(GuiGraphicsExtractor g, int x, int y, int w, int mouseX, int mouseY) {
+            for (int row = 0; row < 2; row++) {
+                int ry = y + row * 17;
+                g.text(font, LABELS[row], x, ry + 3, Theme.TEXT, false);
+                g.text(font, "to", x + w - 28 - 17, ry + 3, Theme.TEXT_DIM, false);
             }
         }
     }

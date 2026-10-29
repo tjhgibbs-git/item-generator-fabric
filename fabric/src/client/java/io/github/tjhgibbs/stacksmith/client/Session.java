@@ -9,7 +9,7 @@ import net.minecraft.core.BlockPos;
 public final class Session {
     public static ItemSpec item = new ItemSpec("diamond_sword");
     public static EntitySpec mob = new EntitySpec("zombie");
-    public static SpawnerSpec spawner = new SpawnerSpec(new EntitySpec("zombie"));
+    public static SpawnerSpec spawner = new SpawnerSpec();
     public static int spawnerEntry;
     /** The spawner block the Spawner tab saves back to, or null when it isn't tied to one. */
     public static BlockPos spawnerPos;
