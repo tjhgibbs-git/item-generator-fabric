@@ -105,7 +105,10 @@ class CommandsTest {
         assertTrue(steps.size() > 4, steps.toString());
         for (String c : steps) {
             assertTrue(c.length() + 1 <= Commands.CHAT_LIMIT, c);
+            // An element is appended as {} and filled in; setting it to {} again fails in game.
+            assertFalse(c.matches(".*] set value (\\{}|\\[])"), c);
         }
+        assertTrue(steps.stream().anyMatch(c -> c.matches(".* append value \\{}")), "the test spawner splits a pool entry");
         assertEquals("setblock 10 64 -5 air", steps.get(steps.size() - 4));
         assertEquals("setblock 10 64 -5 spawner", steps.get(steps.size() - 3));
         assertEquals("data modify block 10 64 -5 {} merge from storage stacksmith:tmp s", steps.get(steps.size() - 2));

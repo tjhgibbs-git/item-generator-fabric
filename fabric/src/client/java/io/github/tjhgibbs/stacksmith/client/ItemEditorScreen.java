@@ -196,7 +196,17 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
                     } else {
                         minecraft.setScreenAndShow(new ItemEditorScreen(parent, loaded, onDone));
                     }
-                })));
+                })),
+                "Start a blank " + Ids.brief(spec.id()) + ": no name, lore, enchantments or other components",
+                () -> {
+                    ItemSpec blank = new ItemSpec(spec.id());
+                    if (onDone == null) {
+                        Session.item = blank;
+                        minecraft.setScreenAndShow(new ItemEditorScreen(parent));
+                    } else {
+                        minecraft.setScreenAndShow(new ItemEditorScreen(parent, blank, onDone));
+                    }
+                });
     }
 
     private void buildLeft() {
@@ -675,7 +685,7 @@ public final class ItemEditorScreen extends StacksmithScreen implements Componen
 
     @Override
     protected void extractPanels(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
-        g.centeredText(font, title, width / 2, 8, Theme.TEXT);
+        headerTitle(g);
         int top = TOP - 2, bottom = bodyBottom() + 2;
         panel(g, PAD - 2, top, leftW() + 4, bottom - top);
         panel(g, midX() - 2, top, midW() + 4, bottom - top);

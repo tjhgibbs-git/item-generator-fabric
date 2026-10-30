@@ -72,15 +72,20 @@ public final class SpawnerSpec {
         Nbt.Compound spawnData() {
             Nbt.Compound c = new Nbt.Compound().put("entity", entity.toTag());
             if (blockLight != null || skyLight != null) {
+                // 0 to 15 is the default once the rules exist, so it's left out as the game does.
                 Nbt.Compound rules = c.child("custom_spawn_rules");
-                if (blockLight != null) {
+                if (blockLight != null && !isFull(blockLight)) {
                     rules.put("block_light_limit", range(blockLight));
                 }
-                if (skyLight != null) {
+                if (skyLight != null && !isFull(skyLight)) {
                     rules.put("sky_light_limit", range(skyLight));
                 }
             }
             return c;
+        }
+
+        private static boolean isFull(int[] r) {
+            return r[0] == 0 && r[1] == 15;
         }
 
         private static Nbt range(int[] r) {
@@ -105,8 +110,10 @@ public final class SpawnerSpec {
             Entry entry = new Entry(e != null && e.has("id") ? EntitySpec.fromTag(e) : new EntitySpec("pig"), weight);
             Nbt.Compound rules = data.getCompound("custom_spawn_rules");
             if (rules != null) {
-                entry.blockLight = readRange(rules.get("block_light_limit"));
-                entry.skyLight = readRange(rules.get("sky_light_limit"));
+                // Inside custom_spawn_rules a missing limit means 0 to 15: the game leaves that
+                // default out when it saves, so an "any light" spawner reads back with no keys.
+                entry.blockLight = rules.has("block_light_limit") ? readRange(rules.get("block_light_limit")) : new int[]{0, 15};
+                entry.skyLight = rules.has("sky_light_limit") ? readRange(rules.get("sky_light_limit")) : new int[]{0, 15};
             }
             return entry;
         }
@@ -185,6 +192,47 @@ public final class SpawnerSpec {
             c.put("SpawnPotentials", pool);
         }
         return c;
+    }
+
+    /** An independent copy. */
+    public SpawnerSpec copy() {
+        return fromTag(toTag());
+    }
+
+    /**
+     * The data two spawners must share to count as identical. Leaves out {@code Delay}: in the
+     * world it is the countdown to the next spawn, so it differs between copies of one spawner.
+     */
+    private Nbt.Compound fingerprint() {
+        Nbt.Compound c = toTag();
+        c.remove(Setting.DELAY.key);
+        return c;
+    }
+
+    /** Same settings and pool (ignoring the running spawn countdown). */
+    public boolean sameAs(SpawnerSpec other) {
+        return fingerprint().equals(other.fingerprint());
+    }
+
+    /** Spawns the same mobs, in the same order, whatever the weights, light limits and settings. */
+    public boolean sameMobs(SpawnerSpec other) {
+        if (entries.size() != other.entries.size()) {
+            return false;
+        }
+        for (int i = 0; i < entries.size(); i++) {
+            if (!entries.get(i).entity.toTag().equals(other.entries.get(i).entity.toTag())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** A copy of this spawner (settings kept) that spawns what {@code source} spawns. */
+    public SpawnerSpec withPoolOf(SpawnerSpec source) {
+        SpawnerSpec out = copy();
+        out.entries.clear();
+        out.entries.addAll(source.copy().entries);
+        return out;
     }
 
     /** Block entity data with its type id, as an item's {@code block_entity_data} needs. */

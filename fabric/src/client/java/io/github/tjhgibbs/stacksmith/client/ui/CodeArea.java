@@ -232,6 +232,16 @@ public final class CodeArea extends AbstractWidget {
     }
 
     @Override
+    public void setFocused(boolean focused) {
+        boolean was = isFocused();
+        super.setFocused(focused);
+        // 26.3's SDL input only delivers typed characters while text input is on for a focused owner.
+        if (focused != was) {
+            Minecraft.getInstance().onTextInputFocusChange(this, focused);
+        }
+    }
+
+    @Override
     public void onClick(MouseButtonEvent event, boolean doubleClick) {
         TextModel.Pos p = posAt(event.x(), event.y());
         if (event.x() < textX() - PAD) {

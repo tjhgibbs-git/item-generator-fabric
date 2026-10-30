@@ -17,10 +17,10 @@ Client-side only. It generates items and commands; the server needs nothing inst
 
 ## Using it
 
-Press **J** (rebindable). Three tabs: **Item**, **Spawner** and **Mob**.
+Press **J** (rebindable). Three tabs: **Spawner**, **Mob** and **Item**.
 
 **Look at a spawner and press J** to edit that spawner: the Spawner tab opens on it, and
-**Save to this spawner** writes your changes back to the same block. That is the main way
+**Overwrite the spawner** writes your changes back to the same block. That is the main way
 in: block → spawner → mob (**Edit mob…** opens the full mob editor for each mob in it).
 
 **Import…** (top right) brings in the item you're holding, the spawner you're looking at, or
@@ -28,6 +28,8 @@ any pasted `/give`, `/setblock`, `/summon`, `/item replace`, bare item (`diamond
 or saved item data. **Saved…** saves what you're editing under a name, or loads one back
 (files in `config/stacksmith/items|mobs|spawners/`, one SNBT file each). It works in nested
 editors too, e.g. load a saved mob into a spawner's **Edit mob…**.
+**New** starts over with a blank item or mob of the same type, or a blank spawner not tied to
+any block. Click it twice: what you were editing is dropped without being saved or exported.
 
 ### Item tab
 
@@ -99,8 +101,21 @@ tags: [legendary, bound]
   lets hostile mobs spawn in daylight, **Normal** restores the usual rule), then the settings in
   plain words.
   A new spawner starts empty. Settings are in seconds and blocks ("Wait at least 10 s", "Runs with a player within 16 blocks").
+  The ◯ beside the player range draws it in the world as a sphere, and the ▢ beside the spawn
+  range draws the area mobs appear in (a box one block above and below the spawner). They stay
+  after you close the editor, so you can walk to the edge; reopen it and click again to hide them.
+  **↺ Reset** (top of the middle column) goes back to the spawner as it was when you loaded it.
+- **Apply to nearby copies** (bottom of the middle column), for spawners you placed several
+  times: **Find** reads every spawner within the radius (in loaded chunks) and counts those that
+  match this one *as it was loaded*. **Identical** matches mobs and settings (the running spawn
+  countdown aside) and overwrites them completely. **Same mob** matches the same mob(s)
+  whatever the settings, and gives them only your mobs and light levels, keeping their own
+  delays, counts and ranges unless you tick **Overwrite settings too**. The matches are
+  outlined in the world for a few seconds. This spawner itself is written by **Overwrite the
+  spawner**. Needs op, like saving.
 - **Right:** the mob, rendered wearing its gear, and:
-  - **Save to this spawner** (when the tab is tied to a block) or **Place where I look**
+  - **Overwrite the spawner** (green, when the tab is tied to a block; the line under it says
+    whether you have unsaved changes) or **Place where I look**
     (replaces a spawner you're looking at, otherwise places against the face; the tab is then
     tied to that block). Spawners too long for one chat command are sent in steps: the data
     is built in command storage piece by piece, then copied onto a fresh spawner at once;
@@ -121,9 +136,10 @@ tags: [legendary, bound]
     (baby, never grows up, slime size, sheep wool, villager profession / level / biome,
     cat/wolf/frog/pig/cow/chicken variants, horse and llama coats, tame, charged creeper and
     fuse, rabbit type, panda genes, armour stand arms/size...).
-  - Equipment ("Head: Diamond Helmet" rows with drop %). On skeletons, strays and bogged the
-    off hand ✎ starts from a tipped arrow (they shoot its effects) and the main hand from a
-    bow: a mob with any custom data doesn't get its usual weapon.
+  - Equipment ("Head: Diamond Helmet" rows with drop %; **All 0** sets every drop chance to
+    0). On skeletons, strays and bogged the off hand ✎ starts from a tipped arrow (they shoot
+    its effects) and the main hand from a bow: a mob with any custom data doesn't get its
+    usual weapon.
   - Behaviour switches; **Stats**: health, speed, damage, armour, follow range, **Size
     (scale)**, attack knockback, armour toughness, step height, jump strength, gravity,
     reinforcements, and **Reach** (set on the main-hand weapon's `attack_range`).

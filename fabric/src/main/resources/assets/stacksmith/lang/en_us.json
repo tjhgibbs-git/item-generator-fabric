@@ -57,12 +57,17 @@
   "stacksmith.tooltip.summon_no_permission": "This server doesn't let you use /summon. The spawn egg still works in creative.",
   "stacksmith.tooltip.summon_too_long": "Too long to send from chat (256). Use the spawn egg, Get command block, or Copy /summon.",
   "stacksmith.tooltip.to_spawner": "Start a spawner with this mob (opens the Spawner tab).",
-  "stacksmith.button.save_spawner": "Save to this spawner",
+  "stacksmith.button.save_spawner": "Overwrite the spawner",
   "stacksmith.tooltip.save_spawner": "Overwrite the spawner at %s with these settings (/setblock).",
   "stacksmith.button.load_looked_at": "Edit spawner I'm looking at",
   "stacksmith.tooltip.load_looked_at": "Load the spawner under your crosshair; saving then overwrites it. Tip: pressing J while looking at a spawner does this too.",
   "stacksmith.tooltip.load_looked_at_none": "Look at a spawner first (close this screen, aim, press J).",
   "stacksmith.msg.saved_spawner": "Saved to the spawner at %s",
+  "stacksmith.msg.placed_spawner": "Placed a spawner at %s",
+  "stacksmith.button.reset_spawner": "↺ Reset",
+  "stacksmith.tooltip.reset_spawner": "Back to this spawner as it was when you loaded it, undoing your edits. Overwrite then puts that back in the world.",
+  "stacksmith.tooltip.reset_spawner_none": "Only for a spawner loaded from the world (look at it and press J).",
+  "stacksmith.msg.reset_spawner": "Back to the spawner as it was loaded",
   "stacksmith.button.load_looked_at_short": "Looked-at",
   "stacksmith.tooltip.get_command_block_mob": "A command block that summons this mob on top of itself as soon as you place it (no 256-character chat limit). The block stays; break it after. Needs op and command blocks enabled."
 }

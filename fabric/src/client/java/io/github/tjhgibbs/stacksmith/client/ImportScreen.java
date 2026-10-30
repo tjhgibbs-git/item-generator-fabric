@@ -92,7 +92,7 @@ public final class ImportScreen extends StacksmithScreen {
         WorldSpawner.read(be, data -> {
             if (data.has("SpawnData") || data.has("SpawnPotentials")) {
                 // Linked to the block, so the spawner tab saves back to it.
-                WorldSpawner.link(SpawnerSpec.fromTag(data), be.getBlockPos());
+                WorldSpawner.linkLoaded(data, be.getBlockPos());
                 minecraft.setScreenAndShow(new SpawnerEditorScreen(rootParent()));
             } else {
                 error = "Only spawners can be imported from blocks so far.";

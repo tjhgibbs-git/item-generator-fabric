@@ -22,9 +22,9 @@ public abstract class StacksmithScreen extends Screen {
 
     /** The three editors, as tabs along the top. */
     public enum Tab {
-        ITEM("Item", "Items: name, lore, enchantments and every other component"),
         SPAWNER("Spawner", "Mob spawners: what they spawn, how often, and how many"),
-        MOB("Mob", "Mobs: type, name, gear, behaviour, stats and effects; summon them or put them in a spawner");
+        MOB("Mob", "Mobs: type, name, gear, behaviour, stats and effects; summon them or put them in a spawner"),
+        ITEM("Item", "Items: name, lore, enchantments and every other component");
 
         final String label, tip;
 
@@ -35,7 +35,7 @@ public abstract class StacksmithScreen extends Screen {
     }
 
     /** The tab the key reopens. */
-    static Tab lastTab = Tab.ITEM;
+    static Tab lastTab = Tab.SPAWNER;
 
     static Screen open(Tab tab, Screen parent) {
         return switch (tab) {
@@ -45,11 +45,15 @@ public abstract class StacksmithScreen extends Screen {
         };
     }
 
-    /** Width of the header's right-hand buttons (Saved… and Import…), for screens adding more. */
-    protected static final int HEADER_RIGHT = 60 + 4 + 56;
+    /** Width of the header's right-hand buttons (New, Saved… and Import…), for screens adding more. */
+    protected static final int HEADER_RIGHT = 60 + 4 + 56 + 4 + 40;
 
-    /** The tab row (top level), Saved… and Import…; nested editors pass {@code null} for no tabs. */
-    protected void header(Tab current, String importTip, Runnable importAction, Runnable savedAction) {
+    /**
+     * The tab row (top level), New, Saved… and Import…; nested editors pass {@code null} for no tabs.
+     * New asks for a second click before it throws away what's being edited.
+     */
+    protected void header(Tab current, String importTip, Runnable importAction, Runnable savedAction,
+                          String newTip, Runnable newAction) {
         if (current != null) {
             lastTab = current;
             int x = PAD;
@@ -62,17 +66,34 @@ public abstract class StacksmithScreen extends Screen {
                 }).selected(() -> t == current).tip(t.tip).at(x, 5));
                 x += w + 2;
             }
+            tabsRight = x;
         }
         if (importAction != null) {
             addRenderableWidget(Chip.of("Import…", 60, 14, importAction).at(width - PAD - 60, 5).tip(importTip));
         }
         if (savedAction != null) {
-            addRenderableWidget(Chip.of("Saved…", 56, 14, savedAction).at(width - PAD - HEADER_RIGHT, 5)
+            addRenderableWidget(Chip.of("Saved…", 56, 14, savedAction).at(width - PAD - 60 - 4 - 56, 5)
                     .tip("Save this under a name, or load one you saved"));
+        }
+        if (newAction != null) {
+            newArmedUntil = 0;
+            newChip = addRenderableWidget(Chip.of("New", 40, 14, () -> {
+                if (System.currentTimeMillis() < newArmedUntil) {
+                    newAction.run();
+                } else {
+                    newArmedUntil = System.currentTimeMillis() + 3000;
+                    newChip.setMessage(Component.literal("Sure?"));
+                    newChip.color(Theme.BAD);
+                    toast(Component.literal("Click New again to start over: unsaved changes are lost"), false);
+                }
+            }).at(width - PAD - HEADER_RIGHT, 5).tip(newTip + " (click twice)"));
         }
     }
 
     protected final Screen parent;
+    private Chip newChip;
+    private int tabsRight = PAD;
+    private long newArmedUntil;
     private final List<ScrollPane> panes = new ArrayList<>();
     private Component toast = Component.empty();
     private int toastColor = Theme.TEXT;
@@ -127,6 +148,18 @@ public abstract class StacksmithScreen extends Screen {
             g.outline(tx, ty, tw, 16, toastColor);
             g.centeredText(font, toast, width / 2, ty + 4, Theme.TEXT);
         }
+    }
+
+    /** Draws the centred title if it clears the tabs and the header's right-hand buttons. */
+    protected void headerTitle(GuiGraphicsExtractor g, int rightEdge) {
+        int half = font.width(title) / 2;
+        if (width / 2 - half - 4 > tabsRight && width / 2 + half + 4 < rightEdge) {
+            g.centeredText(font, title, width / 2, 8, Theme.TEXT);
+        }
+    }
+
+    protected void headerTitle(GuiGraphicsExtractor g) {
+        headerTitle(g, width - PAD - HEADER_RIGHT);
     }
 
     protected static void panel(GuiGraphicsExtractor g, int x, int y, int w, int h) {
@@ -202,6 +235,16 @@ public abstract class StacksmithScreen extends Screen {
             return;
         }
         super.setFocused(listener);
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (newChip != null && newArmedUntil != 0 && System.currentTimeMillis() >= newArmedUntil) {
+            newArmedUntil = 0;
+            newChip.setMessage(Component.literal("New"));
+            newChip.color(Theme.TEXT);
+        }
     }
 
     @Override

@@ -167,7 +167,17 @@ public final class MobEditorScreen extends StacksmithScreen {
                     } else {
                         minecraft.setScreenAndShow(new MobEditorScreen(parent, loaded, onDone));
                     }
-                })));
+                })),
+                "Start a blank " + Ids.brief(root.id()) + ": no name, gear, riders, stats or effects",
+                () -> {
+                    EntitySpec blank = new EntitySpec(root.id());
+                    if (onDone == null) {
+                        Session.mob = blank;
+                        minecraft.setScreenAndShow(new MobEditorScreen(parent));
+                    } else {
+                        minecraft.setScreenAndShow(new MobEditorScreen(parent, blank, onDone));
+                    }
+                });
         buildList();
         buildMiddle();
         buildRight();
@@ -398,7 +408,7 @@ public final class MobEditorScreen extends StacksmithScreen {
 
     @Override
     protected void extractPanels(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
-        g.centeredText(font, title, width / 2, 8, Theme.TEXT);
+        headerTitle(g);
         int top = TOP - 2, bottom = bodyBottom() + 2;
         panel(g, PAD - 2, top, leftW() + 4, bottom - top);
         panel(g, midX() - 2, top, midW() + 4, bottom - top);
@@ -593,9 +603,12 @@ public final class MobEditorScreen extends StacksmithScreen {
                 EntitySpec.Slot.FEET, EntitySpec.Slot.MAINHAND, EntitySpec.Slot.OFFHAND, EntitySpec.Slot.BODY);
         private final List<Chip> pick = new ArrayList<>(), edit = new ArrayList<>(), clear = new ArrayList<>();
         private final List<EditBox> chance = new ArrayList<>();
+        private final Chip noDrops;
 
         EquipmentCard(EntitySpec mob) {
             super("Equipment", 0xFF7FDBCA, "What the mob wears and holds, and the chance each drops on death");
+            noDrops = body(Chip.of("All 0", 30, 10, () -> chance.forEach(b -> b.setValue("0")))
+                    .tip("Set every slot's drop chance to 0%: the mob never drops its gear"));
             for (EntitySpec.Slot s : slots) {
                 ItemSpec item = mob.equipment(s);
                 ItemStack icon = ItemStack.EMPTY;
@@ -660,6 +673,8 @@ public final class MobEditorScreen extends StacksmithScreen {
         @Override
         protected int layoutBody(int x, int y, int w) {
             int pw = w - 16 - 14 - 28 - 6;
+            noDrops.setX(x + w - font.width("Drop %") - 4 - noDrops.getWidth());
+            noDrops.setY(y - 1);
             for (int i = 0; i < slots.size(); i++) {
                 int ry = y + 10 + i * 20;
                 pick.get(i).setX(x);

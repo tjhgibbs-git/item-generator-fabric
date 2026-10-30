@@ -13,6 +13,12 @@ public final class Session {
     public static int spawnerEntry;
     /** The spawner block the Spawner tab saves back to, or null when it isn't tied to one. */
     public static BlockPos spawnerPos;
+    /** The linked spawner as it was read from the world (for Reset and matching), or null. */
+    public static SpawnerSpec spawnerOriginal;
+    /** What the linked block holds now as far as we know: as loaded, then as last saved. */
+    public static SpawnerSpec spawnerSaved;
+    /** Draw the linked spawner's player range (sphere) / spawn area (box) in the world. */
+    public static boolean showPlayerRange, showSpawnRange;
     /** Form cards (false) or the whole item as one outline (true). */
     public static boolean outlineView;
     /** The item tab's simple view: one section (name and lore, enchantments...) at a time. */

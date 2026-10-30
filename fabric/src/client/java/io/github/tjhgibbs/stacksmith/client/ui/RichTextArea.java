@@ -379,6 +379,10 @@ public final class RichTextArea extends AbstractWidget {
     public void setFocused(boolean focused) {
         boolean was = isFocused();
         super.setFocused(focused);
+        // 26.3's SDL input only delivers typed characters while text input is on for a focused owner.
+        if (focused != was) {
+            Minecraft.getInstance().onTextInputFocusChange(this, focused);
+        }
         if (focused && !was) {
             onFocus.run();
         }

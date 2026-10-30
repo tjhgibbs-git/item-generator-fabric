@@ -16,7 +16,11 @@ public final class StacksmithClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         openKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.stacksmith.open", InputConstants.Type.KEYBOARD, InputConstants.KEY_J, CATEGORY));
+        CommandQueue.register();
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+            SpawnerBatch.tick();
+            CommandQueue.tick();
+            RangeView.tick();
             // Key mappings only see presses while no screen has the input, so this never opens
             // the editor over another screen.
             while (openKey.consumeClick()) {

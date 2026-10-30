@@ -63,13 +63,28 @@ public final class WorldSpawner {
             return;
         }
         read(be, data -> {
-            link(SpawnerSpec.fromTag(data), pos);
+            linkLoaded(data, pos);
             then.run();
         });
     }
 
-    /** Makes {@code spawner} the one being edited, saved back to the block at {@code pos} (null: none). */
+    /** Edits the spawner read from the block at {@code pos}, remembering it as it was for Reset. */
+    public static void linkLoaded(Nbt.Compound data, BlockPos pos) {
+        link(SpawnerSpec.fromTag(data), pos);
+        Session.spawnerOriginal = SpawnerSpec.fromTag(data);
+        Session.spawnerSaved = SpawnerSpec.fromTag(data);
+    }
+
+    /**
+     * Makes {@code spawner} the one being edited, saved back to the block at {@code pos} (null:
+     * none). Staying on the same block keeps what it was loaded as (Reset still restores that).
+     */
     public static void link(SpawnerSpec spawner, BlockPos pos) {
+        if (pos == null || !pos.equals(Session.spawnerPos)) {
+            Session.spawnerOriginal = null;
+            Session.spawnerSaved = null;
+            SpawnerBatch.forget();
+        }
         Session.spawner = spawner;
         Session.spawnerEntry = 0;
         Session.spawnerPos = pos == null ? null : pos.immutable();

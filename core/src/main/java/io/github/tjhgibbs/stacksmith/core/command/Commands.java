@@ -81,6 +81,11 @@ public final class Commands {
      * compound or list filled in key by key / element by element. False if a leaf is too long.
      */
     public static boolean writeStorage(String storage, String path, Nbt value, int limit, java.util.List<String> out) {
+        return writeStorage(storage, path, value, limit, out, false);
+    }
+
+    /** {@code emptyThere}: an empty compound or list is already at {@code path} (just appended). */
+    private static boolean writeStorage(String storage, String path, Nbt value, int limit, java.util.List<String> out, boolean emptyThere) {
         String target = "data modify storage " + storage + " " + path;
         String whole = target + " set value " + Snbt.write(value);
         if (whole.length() <= limit) {
@@ -89,16 +94,20 @@ public final class Commands {
         }
         switch (value) {
             case Nbt.Compound c -> {
-                out.add(target + " set value {}");
+                if (!emptyThere) {
+                    out.add(target + " set value {}");
+                }
                 for (var e : c.entries()) {
-                    if (!writeStorage(storage, path + "." + pathKey(e.getKey()), e.getValue(), limit, out)) {
+                    if (!writeStorage(storage, path + "." + pathKey(e.getKey()), e.getValue(), limit, out, false)) {
                         return false;
                     }
                 }
                 return true;
             }
             case Nbt.List l -> {
-                out.add(target + " set value []");
+                if (!emptyThere) {
+                    out.add(target + " set value []");
+                }
                 for (int i = 0; i < l.size(); i++) {
                     Nbt item = l.get(i);
                     String append = target + " append value " + Snbt.write(item);
@@ -106,7 +115,8 @@ public final class Commands {
                         out.add(append);
                     } else if (item instanceof Nbt.Compound || item instanceof Nbt.List) {
                         out.add(target + " append value " + (item instanceof Nbt.Compound ? "{}" : "[]"));
-                        if (!writeStorage(storage, path + "[" + i + "]", item, limit, out)) {
+                        // Setting it to {} again would only get "Nothing changed" back.
+                        if (!writeStorage(storage, path + "[" + i + "]", item, limit, out, true)) {
                             return false;
                         }
                     } else {
