@@ -15,7 +15,7 @@ import io.github.tjhgibbs.stacksmith.core.item.ItemSpec;
 import io.github.tjhgibbs.stacksmith.core.nbt.Nbt;
 import io.github.tjhgibbs.stacksmith.core.nbt.SnbtException;
 import io.github.tjhgibbs.stacksmith.core.outline.Outline;
-import io.github.tjhgibbs.stacksmith.core.preset.Presets;
+import io.github.tjhgibbs.stacksmith.core.preset.SpawnerLog;
 import io.github.tjhgibbs.stacksmith.core.text.TextMarkup;
 import io.github.tjhgibbs.stacksmith.mod.McEntities;
 import io.github.tjhgibbs.stacksmith.mod.McItems;
@@ -72,6 +72,14 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     private Chip placeHere;
     /** Back to the linked spawner as it was loaded. */
     private Chip reset;
+    /** Stars (or unstars) what's being edited. */
+    private Chip star;
+    /** When starred: its nickname, edited in place of the Preview label (Enter or clicking away keeps it, Esc cancels). */
+    private EditBox nickname;
+    /** The name it is starred under (as last read), or null. */
+    private String starName;
+    /** Unstarring takes a second click before this time (it drops the nickname). */
+    private long unstarArmedUntil;
     /** Left edge of the looked-at chip; the title is left out when it would run into it. */
     private int loadChipX;
     private final Map<EntitySpec.Slot, ItemStack> slotIcons = new EnumMap<>(EntitySpec.Slot.class);
@@ -144,12 +152,18 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     @Override
     protected void init() {
         SuggestBox.closeAll();
+        savedLabel = "Recent…";
+        savedTip = "Spawners you've saved, placed or taken out, and the ones you starred. Type to search, Enter to load.";
         header(Tab.SPAWNER, "Look at a spawner, or paste a /setblock, /summon or spawner /give",
                 () -> minecraft.setScreenAndShow(new ImportScreen(this, null)),
-                () -> minecraft.setScreenAndShow(new PresetsScreen(this, Presets.Kind.SPAWNER, spawner.toTag(), data -> {
-                    // Stays tied to the block it was editing, so Save puts the loaded one there.
-                    WorldSpawner.link(SpawnerSpec.fromTag(data), Session.spawnerPos);
-                    minecraft.setScreenAndShow(new SpawnerEditorScreen(parent));
+                () -> minecraft.setScreenAndShow(new SpawnerLibraryScreen(this, spawner, data -> {
+                    // Stays tied to the block it was editing, so Overwrite puts the loaded one there.
+                    SpawnerSpec loaded = SpawnerSpec.fromTag(data);
+                    WorldSpawner.link(loaded, Session.spawnerPos);
+                    SpawnerEditorScreen fresh = new SpawnerEditorScreen(parent);
+                    minecraft.setScreenAndShow(fresh);
+                    fresh.toast(Component.literal("Loaded " + SpawnerLog.title(loaded)
+                            + (Session.spawnerPos != null ? ": Overwrite puts it in the spawner" : "")), true);
                 })),
                 "Start a blank spawner, not tied to any block",
                 () -> {
@@ -256,8 +270,10 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                 .bounds(x, y, w, 20).build());
         getCommandBlock = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.get_command_block"), b -> giveCommandBlock())
                 .bounds(x, y + 22, w, 20).build());
-        copySetblock = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.copy_setblock"), b ->
-                toast(Delivery.copy("/" + command), true)).bounds(x, y + 44, w, 20).build());
+        copySetblock = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.copy_setblock"), b -> {
+            SpawnerLibrary.record(spawner, "Copied /setblock", null);
+            toast(Delivery.copy("/" + command), true);
+        }).bounds(x, y + 44, w, 20).build());
         // Reset sits at the top right of the middle panel, beside "Spawner at x y z".
         String resetLabel = I18n.get("stacksmith.button.reset_spawner");
         int rw = font.width(resetLabel) + 12;
@@ -265,6 +281,96 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         reset.setTooltip(Tooltip.create(Component.translatable(Session.spawnerOriginal != null
                 ? "stacksmith.tooltip.reset_spawner" : "stacksmith.tooltip.reset_spawner_none")));
         reset.active = Session.spawnerOriginal != null && !Session.spawnerOriginal.toTag().equals(spawner.toTag());
+        // In the preview's header, which has room at every width.
+        star = addRenderableWidget(Chip.of("☆ Star", 64, 12, this::toggleStar).at(rightX() + rightW() - 64, TOP));
+        nickname = addRenderableWidget(new EditBox(font, rightX() + 1, TOP + 2, rightW() - 64 - 6, 10, Component.literal("Nickname")));
+        nickname.setBordered(false);
+        nickname.setMaxLength(80);
+        nickname.setTextColor(Theme.ACCENT);
+        nickname.setTooltip(Tooltip.create(Component.literal("Its nickname: click to rename, Enter to keep")));
+        starName = null;
+        updateStar();
+    }
+
+    /** Stars the spawner being edited (then its nickname is ready to type), or, on a second click, unstars it. */
+    private void toggleStar() {
+        String name = SpawnerLibrary.starredName(spawner);
+        if (name != null) {
+            if (System.currentTimeMillis() >= unstarArmedUntil) {
+                unstarArmedUntil = System.currentTimeMillis() + 3000;
+                starChip("Unstar?", 48, Theme.BAD);
+                return;
+            }
+            unstarArmedUntil = 0;
+            SpawnerLibrary.unstar(name, spawner.toTag());
+            toast(Component.literal("Unstarred \"" + name + "\" (still in Recent…)"), true);
+            updateStar();
+        } else {
+            name = SpawnerLibrary.star(spawner, null);
+            updateStar();
+            if (name == null) {
+                toast(Component.literal("Couldn't star it"), false);
+                return;
+            }
+            toast(Component.literal("Starred: type a nickname, Enter to keep it"), true);
+            focusSoon(nickname);
+        }
+    }
+
+    private void updateStar() {
+        String name = SpawnerLibrary.starredName(spawner);
+        // Starred, the nickname beside it says so: the chip shrinks to ★ to give the nickname room.
+        starChip(name != null ? "★" : "☆ Star", name != null ? 16 : 64, name != null ? Theme.ACCENT : Theme.TEXT);
+        star.active = !spawner.entries().isEmpty();
+        star.tip(name != null ? "In Recent… → ★ Starred. Click twice to unstar." : "Keep this spawner in Recent… → ★ Starred, with a nickname, to load it again any time");
+        nickname.visible = name != null;
+        if (!java.util.Objects.equals(name, starName) && !nickname.isFocused()) {
+            nickname.setValue(name == null ? "" : name);
+            nickname.moveCursorToStart(false);
+        }
+        starName = name;
+    }
+
+    /** Sets the star chip's label, width and colour, right-aligned in the preview header, with the nickname filling the rest. */
+    private void starChip(String label, int w, int color) {
+        star.setMessage(Component.literal(label));
+        star.color(color);
+        star.setWidth(w);
+        star.setX(rightX() + rightW() - w);
+        nickname.setWidth(star.getX() - rightX() - 6);
+    }
+
+    /** Keeps the typed nickname (renaming the starred file), or puts the old one back if it can't. */
+    private void commitNickname() {
+        if (starName == null || nickname.getValue().strip().equals(starName)) {
+            nickname.setValue(starName == null ? "" : starName);
+            return;
+        }
+        String to = SpawnerLibrary.rename(starName, nickname.getValue(), why -> toast(Component.literal(why), false));
+        if (to != null) {
+            toast(Component.literal("Nicknamed \"" + to + "\""), true);
+            starName = to;
+        }
+        nickname.setValue(starName);
+        nickname.moveCursorToStart(false);
+    }
+
+    @Override
+    public boolean keyPressed(net.minecraft.client.input.KeyEvent e) {
+        if (nickname != null && nickname.isFocused()) {
+            int k = e.key();
+            if (k == com.mojang.blaze3d.platform.InputConstants.KEY_RETURN || k == com.mojang.blaze3d.platform.InputConstants.KEY_NUMPADENTER) {
+                commitNickname();
+                setFocused(null);
+                return true;
+            }
+            if (k == com.mojang.blaze3d.platform.InputConstants.KEY_ESCAPE) {
+                nickname.setValue(starName == null ? "" : starName);
+                setFocused(null);
+                return true;
+            }
+        }
+        return super.keyPressed(e);
     }
 
     private void buildFooter() {
@@ -298,6 +404,9 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
 
     private void giveSpawner() {
         McItems.Result r = McItems.toStack(Commands.spawnerItem(spawner, spawnerName()), Delivery.registries());
+        if (r.ok() && Delivery.isCreative()) {
+            SpawnerLibrary.record(spawner, "Spawner item", null);
+        }
         toast(r.ok() ? Delivery.giveCreative(r.stack()) : Component.literal(r.error()), r.ok());
     }
 
@@ -305,6 +414,9 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         String setblock = Commands.setSpawner(spawner, "~ ~ ~", style());
         ItemSpec cb = Commands.commandBlockItem(setblock, TextMarkup.toComponent("&d" + spawnerLabel() + " spawner (place to build)", true));
         McItems.Result r = McItems.toStack(cb, Delivery.registries());
+        if (r.ok() && Delivery.isCreative()) {
+            SpawnerLibrary.record(spawner, "Command block", null);
+        }
         toast(r.ok() ? Delivery.giveCreative(r.stack()) : Component.literal(r.error()), r.ok());
     }
 
@@ -352,10 +464,10 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         boolean saved = Session.spawnerPos != null;
         Session.spawnerPos = p.immutable();
         Session.spawnerSaved = spawner.copy();
+        SpawnerLibrary.record(spawner, saved ? "Saved" : "Placed", p);
+        // The button now saves to this block, and nearby copies are looked for as saved now.
+        rebuild();
         toast(Component.translatable(saved ? "stacksmith.msg.saved_spawner" : "stacksmith.msg.placed_spawner", at(p)), true);
-        if (!saved) {
-            rebuild(); // the button now saves to this block
-        }
     }
 
     /** Allowed to run these: setblock, and data when it is built in steps. */
@@ -372,6 +484,13 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     @Override
     public void tick() {
         super.tick();
+        if (!nickname.isFocused() && starName != null && !nickname.getValue().equals(starName)) {
+            commitNickname(); // clicked away: keep what was typed
+        }
+        if (unstarArmedUntil != 0 && System.currentTimeMillis() >= unstarArmedUntil) {
+            unstarArmedUntil = 0;
+            updateStar();
+        }
         if (dirty && System.currentTimeMillis() - changedAt >= DEBOUNCE_MS) {
             dirty = false;
             recompute();
@@ -407,6 +526,7 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         List<String> steps = Commands.setSpawnerInSteps(spawner, "-30000000 -64 -30000000", style(), Commands.CHAT_LIMIT);
         placeHere.active = valid && canPlace(steps);
         reset.active = Session.spawnerOriginal != null && !Session.spawnerOriginal.toTag().equals(spawner.toTag());
+        updateStar();
         copySetblock.active = valid;
         getSpawner.setTooltip(Tooltip.create(Component.translatable(creative ? "stacksmith.tooltip.get_spawner" : "stacksmith.tooltip.get_creative")));
         getCommandBlock.setTooltip(Tooltip.create(Component.translatable(creative ? "stacksmith.tooltip.get_command_block" : "stacksmith.tooltip.get_creative")));
@@ -427,9 +547,15 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         panel(g, midX() - 2, top, midW() + 4, bottom - top);
         panel(g, rightX() - 2, top, rightW() + 4, bottom - top);
         label(g, spawner.entries().size() > 1 ? "Spawns (picks one)" : "Spawns", PAD + 1, TOP + 2);
-        label(g, Session.spawnerPos != null ? "Spawner at " + at(Session.spawnerPos) : "New spawner", midX() + 1, TOP + 2);
+        label(g, font.plainSubstrByWidth(Session.spawnerPos != null ? "Spawner at " + at(Session.spawnerPos) : "New spawner",
+                reset.getX() - midX() - 4), midX() + 1, TOP + 2);
         int rx = rightX(), rw = rightW();
-        label(g, "Preview", rx + 1, TOP + 2);
+        if (!nickname.visible) {
+            label(g, "Preview", rx + 1, TOP + 2);
+        } else if (nickname.isFocused() || nickname.isHovered()) {
+            // Shows the nickname can be edited.
+            g.fill(rx, TOP + 11, star.getX() - 4, TOP + 12, nickname.isFocused() ? Theme.ACCENT : Theme.BORDER);
+        }
         int py = TOP + 14, ph = buttonsTop() - py - 26;
         MobPreview.draw(g, font, preview, rx, py, rw, ph, mouseX, mouseY);
         int y = py + ph + 4;
@@ -618,18 +744,23 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
 
     /**
      * Applies this spawner to the copies of it nearby: finds spawners within a radius that match
-     * the linked one as it was loaded (identical, or with the same mobs), then overwrites them.
+     * what the linked block holds (as loaded, or as last saved: never the unsaved edits), then
+     * overwrites them. So editing a pig spawner into a zombie one still finds the other pig
+     * spawners, until the zombie is saved.
      */
     private final class BatchCard extends Card {
-        private final SpawnerSpec reference = Session.spawnerOriginal;
+        private final SpawnerSpec reference = Session.spawnerSaved;
         private final boolean allowed = Delivery.canUse("data") && Delivery.canUse("setblock");
         private final EditBox radius;
         private final Chip find, identical, sameMobs, settings, apply;
         private final List<BlockPos> matches = SpawnerBatch.matches(reference);
+        /** Overwrite settings too only applies to Same mob. (Not the chip's visible flag: the pane resets that when scrolling.) */
+        private final boolean showSettings = SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS;
 
         BatchCard() {
             super("Apply to nearby copies", 0xFFB48CFF, "Placed several copies of this spawner? Find the ones nearby that match it "
-                    + "as it was loaded, and give them all your changes. This spawner itself is written by Overwrite.");
+                    + "as it is in the world (your unsaved edits aren't looked for), and give them all your changes. "
+                    + "This spawner itself is written by Overwrite.");
             radius = body(new EditBox(font, 0, 0, 30, 14, Component.literal("Radius")));
             radius.setValue(Integer.toString(SpawnerBatch.radius));
             radius.setTooltip(Tooltip.create(Component.literal("How far from this spawner to look, up to " + SpawnerBatch.MAX_RADIUS
@@ -654,19 +785,21 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
             })).tip("Read the spawners within the radius and count the matching ones"));
             identical = body(Chip.of("Identical", 60, 14, () -> setMatch(SpawnerBatch.Match.IDENTICAL))
                     .selected(() -> SpawnerBatch.match == SpawnerBatch.Match.IDENTICAL)
-                    .tip("Only spawners exactly like this one was (mobs and every setting), which get everything"));
+                    .tip("Only spawners exactly like this one as saved (mobs and every setting), which get everything"));
             sameMobs = body(Chip.of("Same mob", 60, 14, () -> setMatch(SpawnerBatch.Match.SAME_MOBS))
                     .selected(() -> SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS)
-                    .tip("Spawners with the same mob(s) as this one was, whatever their timing and ranges"));
+                    .tip("Spawners with the same mob(s) as this one as saved, whatever their timing and ranges"));
             settings = body(Chip.of((SpawnerBatch.overwriteSettings ? "☑" : "☐") + " Overwrite settings too", 100, 14, () -> {
                 SpawnerBatch.overwriteSettings = !SpawnerBatch.overwriteSettings;
                 rebuild();
             }).left().tip("Off: they get the new mob(s) and keep their own delays, counts and ranges (say, a trigger distance you "
                     + "tuned). On: they get this spawner's settings too."));
-            settings.visible = SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS;
             int n = matches.size();
             apply = body(Chip.of(n == 0 ? "Apply to matches" : "Apply to " + n + (n == 1 ? " spawner" : " spawners"), 100, 16, () -> {
                 String why = SpawnerBatch.apply(reference, spawner, style());
+                if (why == null) {
+                    SpawnerLibrary.record(spawner, "Applied to " + n + (n == 1 ? " copy" : " copies"), null);
+                }
                 toast(Component.literal(why == null ? "Overwriting " + n + (n == 1 ? " spawner" : " spawners") : why), why == null);
                 rebuild();
             }).color(Theme.GOOD).tip("Overwrite the matching spawners with this one"
@@ -709,11 +842,13 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
             sameMobs.setX(identical.getX() + cw + 2);
             sameMobs.setY(y + 17);
             int ry = y + 34;
-            if (settings.visible) {
-                settings.setX(x);
+            settings.setX(x);
+            settings.setWidth(w);
+            if (showSettings) {
                 settings.setY(ry);
-                settings.setWidth(w);
                 ry += 17;
+            } else {
+                settings.setY(-10_000); // off every pane, so it stays hidden
             }
             ry += 12; // status line
             apply.setX(x);
@@ -731,7 +866,7 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
             String line;
             int color = Theme.TEXT_DIM;
             if (reference == null) {
-                line = "Load a spawner from the world first (look at it, press J).";
+                line = "Load a spawner (look at it, press J) or place this one first.";
                 color = Theme.WARN;
             } else if (!allowed) {
                 line = "Needs operator (to read and set spawners).";
@@ -739,12 +874,16 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
             } else if (!SpawnerBatch.status().isEmpty()) {
                 line = SpawnerBatch.status();
             } else if (SpawnerBatch.searched()) {
-                line = matches.size() + " of " + SpawnerBatch.foundCount() + " nearby match";
+                line = matches.size() + " of " + SpawnerBatch.foundCount() + " nearby match " + SpawnerLog.title(reference);
                 color = matches.isEmpty() ? Theme.TEXT_DIM : Theme.GOOD;
             } else {
-                line = "Press Find to search.";
+                line = "Finds " + SpawnerLog.title(reference) + (unsaved() ? ", as saved" : "");
             }
             g.text(font, font.plainSubstrByWidth(line, w), x, apply.getY() - 11, color, false);
+            if (mouseX >= x && mouseX < x + w && mouseY >= apply.getY() - 12 && mouseY < apply.getY() - 1 && reference != null && unsaved()) {
+                g.setTooltipForNextFrame(font, Component.literal("Looks for copies of the spawner as it is in the world. "
+                        + "Overwrite first to look for what you're editing instead."), mouseX, mouseY);
+            }
         }
     }
 

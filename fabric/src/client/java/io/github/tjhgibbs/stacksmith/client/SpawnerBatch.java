@@ -18,7 +18,8 @@ import java.util.Map;
 
 /**
  * Copying the edited spawner onto the other spawners around it: find the ones that match the
- * linked spawner as it was loaded (identical, or spawning the same mobs), then overwrite them.
+ * linked spawner as it is in the world, i.e. as loaded or last saved, not the unsaved edits
+ * (identical, or spawning the same mobs), then overwrite them.
  *
  * <p>Finding reads each spawner's full data from the server, one at a time (the game only
  * tracks one block query at once). Writing goes through {@link CommandQueue}. Both need op: the

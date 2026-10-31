@@ -27,7 +27,8 @@ in: block → spawner → mob (**Edit mob…** opens the full mob editor for eac
 any pasted `/give`, `/setblock`, `/summon`, `/item replace`, bare item (`diamond_sword[...]`)
 or saved item data. **Saved…** saves what you're editing under a name, or loads one back
 (files in `config/stacksmith/items|mobs|spawners/`, one SNBT file each). It works in nested
-editors too, e.g. load a saved mob into a spawner's **Edit mob…**.
+editors too, e.g. load a saved mob into a spawner's **Edit mob…**. On the Spawner tab this
+button is **Recent…** (below).
 **New** starts over with a blank item or mob of the same type, or a blank spawner not tied to
 any block. Click it twice: what you were editing is dropped without being saved or exported.
 
@@ -107,7 +108,9 @@ tags: [legendary, bound]
   **↺ Reset** (top of the middle column) goes back to the spawner as it was when you loaded it.
 - **Apply to nearby copies** (bottom of the middle column), for spawners you placed several
   times: **Find** reads every spawner within the radius (in loaded chunks) and counts those that
-  match this one *as it was loaded*. **Identical** matches mobs and settings (the running spawn
+  match this one *as it is in the world*: as loaded, or as you last saved it with Overwrite, never
+  your unsaved edits (the card says what it looks for, e.g. "Finds Pig, as saved"). So turning a
+  pig spawner into a zombie one still finds the other pig spawners until you overwrite. **Identical** matches mobs and settings (the running spawn
   countdown aside) and overwrites them completely. **Same mob** matches the same mob(s)
   whatever the settings, and gives them only your mobs and light levels, keeping their own
   delays, counts and ranges unless you tick **Overwrite settings too**. The matches are
@@ -123,6 +126,21 @@ tags: [legendary, bound]
   - **Get command block**: a command block that turns itself into the spawner when placed
     (always active, no redstone, no 256-character limit);
   - **Copy /setblock**.
+  - **☆ Star** (top right) keeps this spawner in the Starred list and puts the cursor on its
+    **nickname**, which then replaces the "Preview" label: type what you think of it as
+    ("Pig pen by the river"), Enter. Click the nickname any time to change it. Unstarring (★)
+    takes two clicks, since it drops the nickname.
+- **Recent…** (header): every spawner you saved, placed, applied, took out as an item or command
+  block, or copied, newest first (`config/stacksmith/spawner-log.snbt`, the last 300; using the
+  same spawner again moves it up and counts it). **★ Starred** is the second tab: starred
+  spawners are kept for good as files in `config/stacksmith/spawners/` (the old saved spawners
+  show up there). A starred spawner's nickname is its title everywhere, with the mob dimmed after
+  it in Recent; **✎** on its row renames it in place (Enter keeps it, Esc cancels; two starred
+  spawners can't share a nickname). Type to search nicknames, mob names, types, riders and
+  coordinates; ↑ ↓ and
+  **Enter** load, or **Load** on a row; hover a row for its mobs, light and settings. ★/☆ on a row
+  stars or unstars it (an unstarred row stays until you leave, so a misclick is one click to
+  undo). Loading keeps the tab tied to its block, so **Overwrite** then puts it there.
 
 ### Mob tab
 
@@ -140,6 +158,20 @@ tags: [legendary, bound]
     0). On skeletons, strays and bogged the off hand ✎ starts from a tipped arrow (they shoot
     its effects) and the main hand from a bow: a mob with any custom data doesn't get its
     usual weapon.
+  - **Tags** (after Behaviour), for `@e[tag=...]`: the mob's tags as chips (click one to remove
+    it) and a box to add more. Enter adds what you typed; Tab, ↑ ↓ or a click take a suggestion.
+    Tags you've used before come first, most recent first (a tag counts as used when you add
+    it, or summon, give, copy or save a mob or spawner that has it, riders included; this is
+    tracked across all worlds, so a datapack tag you used elsewhere ranks here too), then the
+    world's other datapack tags alphabetically.
+    **Tags…** opens the full list (On this mob, Recently used, From datapacks): tick tags on and
+    off, search, type a new one, ✕ to forget you used one,
+    **Scan datapacks** (reads every pack in the world's `datapacks` folder, zipped or not, even
+    one that failed to load: `tag … add|remove`, `tag=`/`tag=!` in selectors and `Tags:[…]` in
+    functions, predicates, advancements and loot tables; hover a tag for where it was seen) and
+    **Datapack tags** to show or hide those. Remembered per world in
+    `config/stacksmith/entity-tags.snbt`. Scanning needs a world you're running (singleplayer or
+    LAN host); on a server you still get the tags you've used there.
   - Behaviour switches; **Stats**: health, speed, damage, armour, follow range, **Size
     (scale)**, attack knockback, armour toughness, step height, jump strength, gravity,
     reinforcements, and **Reach** (set on the main-hand weapon's `attack_range`).

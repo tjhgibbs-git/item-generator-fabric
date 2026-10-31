@@ -29,6 +29,8 @@ public final class EntitySpec {
         public static final String CUSTOM_NAME = "CustomName";
         public static final String PASSENGERS = "Passengers";
         public static final String HEALTH = "Health";
+        /** Scoreboard tags, what {@code @e[tag=...]} selects on. */
+        public static final String TAGS = "Tags";
 
         private Keys() {
         }
@@ -274,6 +276,33 @@ public final class EntitySpec {
             Nbt.List l = new Nbt.List();
             effects.forEach(e -> l.add(e.toTag()));
             data.put(Keys.EFFECTS, l);
+        }
+        return this;
+    }
+
+    // ---- tags ----------------------------------------------------------------------------------
+
+    /** The mob's tags (for {@code @e[tag=...]}), in order. */
+    public List<String> tags() {
+        List<String> out = new ArrayList<>();
+        Nbt.List list = data.getList(Keys.TAGS);
+        if (list != null) {
+            for (Nbt n : list.items()) {
+                if (n instanceof Nbt.Str s && !out.contains(s.value())) {
+                    out.add(s.value());
+                }
+            }
+        }
+        return out;
+    }
+
+    public EntitySpec tags(List<String> tags) {
+        if (tags.isEmpty()) {
+            data.remove(Keys.TAGS);
+        } else {
+            Nbt.List l = new Nbt.List();
+            tags.stream().distinct().forEach(t -> l.add(Nbt.str(t)));
+            data.put(Keys.TAGS, l);
         }
         return this;
     }

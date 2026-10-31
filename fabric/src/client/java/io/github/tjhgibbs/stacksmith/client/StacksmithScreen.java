@@ -72,8 +72,7 @@ public abstract class StacksmithScreen extends Screen {
             addRenderableWidget(Chip.of("Import…", 60, 14, importAction).at(width - PAD - 60, 5).tip(importTip));
         }
         if (savedAction != null) {
-            addRenderableWidget(Chip.of("Saved…", 56, 14, savedAction).at(width - PAD - 60 - 4 - 56, 5)
-                    .tip("Save this under a name, or load one you saved"));
+            addRenderableWidget(Chip.of(savedLabel, 56, 14, savedAction).at(width - PAD - 60 - 4 - 56, 5).tip(savedTip));
         }
         if (newAction != null) {
             newArmedUntil = 0;
@@ -91,7 +90,11 @@ public abstract class StacksmithScreen extends Screen {
     }
 
     protected final Screen parent;
+    /** The header's Saved… chip; a screen may set these before calling {@link #header}. */
+    protected String savedLabel = "Saved…", savedTip = "Save this under a name, or load one you saved";
     private Chip newChip;
+    /** A text box to focus (all its text selected) on the next tick; see {@link #focusSoon}. */
+    private net.minecraft.client.gui.components.EditBox focusNext;
     private int tabsRight = PAD;
     private long newArmedUntil;
     private final List<ScrollPane> panes = new ArrayList<>();
@@ -237,9 +240,25 @@ public abstract class StacksmithScreen extends Screen {
         super.setFocused(listener);
     }
 
+    /**
+     * Focuses {@code box} with its text selected, ready to type over. Deferred to the next tick:
+     * called from a button's click, the screen would hand focus back to that button afterwards.
+     */
+    protected void focusSoon(net.minecraft.client.gui.components.EditBox box) {
+        focusNext = box;
+    }
+
     @Override
     public void tick() {
         super.tick();
+        if (focusNext != null) {
+            if (children().contains(focusNext)) {
+                setFocused(focusNext);
+                focusNext.moveCursorToEnd(false);
+                focusNext.setHighlightPos(0);
+            }
+            focusNext = null;
+        }
         if (newChip != null && newArmedUntil != 0 && System.currentTimeMillis() >= newArmedUntil) {
             newArmedUntil = 0;
             newChip.setMessage(Component.literal("New"));

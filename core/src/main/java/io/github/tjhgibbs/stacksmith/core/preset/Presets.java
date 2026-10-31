@@ -89,6 +89,34 @@ public final class Presets {
         return Files.exists(dir(kind).resolve(fileName(name)));
     }
 
+    /** {@code base}, or the first of "base (2)", "base (3)"... not already saved. */
+    public String freeName(Kind kind, String base) {
+        String name = base.isBlank() ? "unnamed" : base.strip();
+        for (int i = 2; exists(kind, name); i++) {
+            name = (base.isBlank() ? "unnamed" : base.strip()) + " (" + i + ")";
+        }
+        return name;
+    }
+
+    /**
+     * Renames a preset, keeping its file's date (so its place in the list). Returns the new
+     * name; fails if another preset already has it. A change of case alone works on Windows too.
+     */
+    public String rename(Kind kind, String from, String to) throws IOException {
+        String a = fileName(from), b = fileName(to);
+        if (a.equals(b)) {
+            return b.substring(0, b.length() - 5);
+        }
+        if (!a.equalsIgnoreCase(b) && Files.exists(dir(kind).resolve(b))) {
+            throw new java.nio.file.FileAlreadyExistsException(b.substring(0, b.length() - 5));
+        }
+        // Through a temporary name, so "pig" → "Pig" isn't a no-op on case-insensitive disks.
+        Path tmp = dir(kind).resolve(a + ".renaming");
+        Files.move(dir(kind).resolve(a), tmp);
+        Files.move(tmp, dir(kind).resolve(b));
+        return b.substring(0, b.length() - 5);
+    }
+
     public void delete(Kind kind, String name) throws IOException {
         Files.deleteIfExists(dir(kind).resolve(fileName(name)));
     }

@@ -254,6 +254,93 @@ public class BridgeGameTests {
     }
 
     /**
+     * Apply to nearby copies compares the spawner as the editor last saved it with spawners read
+     * back from the world. Every shape the editor makes must still match itself after the game
+     * has stored it (one command or in steps), and keep matching when saved again from what was read.
+     */
+    @GameTest(structure = EMPTY_64, maxTicks = 20)
+    public void savedSpawnersMatchTheirCopiesInTheWorld(GameTestHelper h) {
+        HolderLookup.Provider reg = h.getLevel().registryAccess();
+        var server = h.getLevel().getServer();
+        var source = server.createCommandSourceStack().withSuppressedOutput();
+        java.util.Map<String, SpawnerSpec> shapes = new java.util.LinkedHashMap<>();
+        shapes.put("plain pig, classic light", spawnerOf(new SpawnerSpec.Entry(new EntitySpec("pig"), 1).classicLight()));
+        SpawnerSpec rich = spawnerOf(new SpawnerSpec.Entry(zombie(), 1).classicLight());
+        rich.set(SpawnerSpec.Setting.DELAY, 5).set(SpawnerSpec.Setting.COUNT, 7).set(SpawnerSpec.Setting.PLAYER_RANGE, 40)
+                .set(SpawnerSpec.Setting.MIN_DELAY, 1).set(SpawnerSpec.Setting.MAX_DELAY, 2);
+        shapes.put("geared zombie, settings changed", rich);
+        SpawnerSpec.Entry any = new SpawnerSpec.Entry(new EntitySpec("skeleton"), 1);
+        any.blockLight = new int[]{0, 15};
+        any.skyLight = new int[]{0, 15};
+        shapes.put("any light", spawnerOf(any));
+        SpawnerSpec.Entry dark = new SpawnerSpec.Entry(new EntitySpec("husk"), 1);
+        dark.blockLight = new int[]{0, 0};
+        shapes.put("block light only, single level", spawnerOf(dark));
+        shapes.put("blaze, classic 11", spawnerOf(new SpawnerSpec.Entry(new EntitySpec("blaze"), 1).classicLight()));
+        SpawnerSpec pool = spawnerOf(new SpawnerSpec.Entry(zombie(), 5).classicLight());
+        for (String id : new String[]{"creeper", "spider", "witch"}) {
+            EntitySpec e = new EntitySpec(id);
+            e.data().put("CustomName", TextMarkup.toComponent("&cA rather long name for the " + id, true));
+            pool.entries().add(new SpawnerSpec.Entry(e, 2));
+        }
+        pool.entries().get(2).blockLight = new int[]{3, 9};
+        shapes.put("pool of four, saved in steps", pool);
+        EntitySpec jockey = new EntitySpec("spider").passengers(List.of(new EntitySpec("skeleton")));
+        shapes.put("spider jockey", spawnerOf(new SpawnerSpec.Entry(jockey, 1)));
+
+        List<String> wrong = new ArrayList<>();
+        int x = 2;
+        for (var shape : shapes.entrySet()) {
+            SpawnerSpec spec = shape.getValue();
+            Nbt.Compound back = place(h, source, reg, spec, x);
+            Nbt.Compound again = back == null ? null : place(h, source, reg, SpawnerSpec.fromTag(back), x + 1);
+            x += 3;
+            if (back == null || again == null) {
+                wrong.add(shape.getKey() + ": not placed");
+                continue;
+            }
+            SpawnerSpec read = SpawnerSpec.fromTag(back);
+            if (!read.sameAs(spec) || !read.sameMobs(spec)) {
+                wrong.add(shape.getKey() + ":\n    saved " + Snbt.write(spec.toTag()) + "\n    read  " + Snbt.write(read.toTag()));
+            } else if (!SpawnerSpec.fromTag(again).sameAs(read)) {
+                wrong.add(shape.getKey() + ": changed when saved again from what was read");
+            }
+            // Same mobs, other settings: found by Same mob, not by Identical.
+            SpawnerSpec tuned = spec.copy().set(SpawnerSpec.Setting.SPAWN_RANGE, 9);
+            if (tuned.sameAs(read) || !tuned.sameMobs(read)) {
+                wrong.add(shape.getKey() + ": a copy with another spawn range matched wrongly");
+            }
+        }
+        if (!wrong.isEmpty()) {
+            h.fail("saved spawners don't match their copies:\n  " + String.join("\n  ", wrong));
+            return;
+        }
+        h.succeed();
+    }
+
+    private static SpawnerSpec spawnerOf(SpawnerSpec.Entry entry) {
+        SpawnerSpec s = new SpawnerSpec();
+        s.entries().add(entry);
+        return s;
+    }
+
+    /** Writes {@code spec} at column {@code x} the way the editor saves, and reads the block back. */
+    private static Nbt.Compound place(GameTestHelper h, net.minecraft.commands.CommandSourceStack source, HolderLookup.Provider reg,
+                                      SpawnerSpec spec, int x) {
+        BlockPos pos = h.absolutePos(new BlockPos(x, 2, 5));
+        String at = pos.getX() + " " + pos.getY() + " " + pos.getZ();
+        List<String> steps = Commands.setSpawnerInSteps(spec, at, Commands.Style.DEFAULT, Commands.CHAT_LIMIT);
+        if (steps == null) {
+            return null;
+        }
+        for (String c : steps) {
+            h.getLevel().getServer().getCommands().performPrefixedCommand(source, c);
+        }
+        BlockEntity be = h.getLevel().getBlockEntity(pos);
+        return be == null ? null : McNbt.fromGame(be.saveWithoutMetadata(reg));
+    }
+
+    /**
      * Every field in entities.outline, on every mob it lists: load it into the real mob, save the
      * mob, and check the value is still there. Catches wrong keys, types and value ranges.
      */

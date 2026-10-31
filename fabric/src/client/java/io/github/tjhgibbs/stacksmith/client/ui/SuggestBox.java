@@ -33,6 +33,10 @@ public final class SuggestBox extends EditBox {
     private Consumer<String> onAccept = s -> {
     };
     private boolean suppress;
+    /** Free-text mode (see {@link #onSubmit}): called with what was added; null otherwise. */
+    private Consumer<String> onSubmit;
+    /** Whether ↑ ↓ moved the selection since the last typing (free-text Enter then takes it). */
+    private boolean navigated;
 
     public SuggestBox(Font font, int width, int height, Component label, Supplier<List<String>> source) {
         super(font, 0, 0, width, height, label);
@@ -51,6 +55,23 @@ public final class SuggestBox extends EditBox {
         return this;
     }
 
+    /**
+     * Free text with suggestions, e.g. tags: Enter submits what was typed (unless ↑ ↓ picked a
+     * suggestion), Tab or a click submits the suggestion. The box is cleared after each.
+     */
+    public SuggestBox onSubmit(Consumer<String> listener) {
+        this.onSubmit = listener;
+        return this;
+    }
+
+    private void submit(String value) {
+        if (!value.isBlank()) {
+            onSubmit.accept(value.strip());
+        }
+        setValueQuietly("");
+        refresh();
+    }
+
     public void setValueQuietly(String v) {
         suppress = true;
         setValue(v);
@@ -63,6 +84,7 @@ public final class SuggestBox extends EditBox {
             return;
         }
         matches.clear();
+        navigated = false;
         String q = getValue().strip().toLowerCase(Locale.ROOT);
         List<String> all = source.get();
         if (q.isEmpty() && isFocused()) {
@@ -71,13 +93,14 @@ public final class SuggestBox extends EditBox {
             String brief = Ids.brief(q);
             List<String> starts = new ArrayList<>(), contains = new ArrayList<>();
             for (String id : all) {
-                String b = Ids.brief(id);
-                if (id.equals(q) || b.equals(q)) {
+                // Lower-cased: tags may have capitals, typed or not.
+                String lid = id.toLowerCase(Locale.ROOT), b = Ids.brief(lid);
+                if (lid.equals(q) || b.equals(q)) {
                     continue;
                 }
-                if (b.startsWith(brief) || id.startsWith(q)) {
+                if (b.startsWith(brief) || lid.startsWith(q)) {
                     starts.add(id);
-                } else if (id.contains(brief)) {
+                } else if (lid.contains(brief)) {
                     contains.add(id);
                 }
             }
@@ -92,7 +115,8 @@ public final class SuggestBox extends EditBox {
             open = null;
         }
         String first = matches.isEmpty() ? "" : Ids.brief(matches.getFirst());
-        setSuggestion(!first.isEmpty() && first.startsWith(Ids.brief(q)) && !q.isEmpty() ? first.substring(Ids.brief(q).length()) : "");
+        setSuggestion(!first.isEmpty() && first.toLowerCase(Locale.ROOT).startsWith(Ids.brief(q)) && !q.isEmpty()
+                ? first.substring(Ids.brief(q).length()) : "");
     }
 
     @Override
@@ -115,6 +139,9 @@ public final class SuggestBox extends EditBox {
             open = null;
         }
         onAccept.accept(getValue());
+        if (onSubmit != null) {
+            submit(getValue());
+        }
     }
 
     @Override
@@ -122,6 +149,7 @@ public final class SuggestBox extends EditBox {
         if (open == this && !matches.isEmpty()) {
             switch (e.key()) {
                 case InputConstants.KEY_DOWN -> {
+                    navigated = true;
                     selected = Math.min(matches.size() - 1, selected + 1);
                     if (selected >= scroll + ROWS) {
                         scroll = selected - ROWS + 1;
@@ -129,6 +157,7 @@ public final class SuggestBox extends EditBox {
                     return true;
                 }
                 case InputConstants.KEY_UP -> {
+                    navigated = true;
                     selected = Math.max(0, selected - 1);
                     if (selected < scroll) {
                         scroll = selected;
@@ -136,12 +165,20 @@ public final class SuggestBox extends EditBox {
                     return true;
                 }
                 case InputConstants.KEY_TAB, InputConstants.KEY_RETURN, InputConstants.KEY_NUMPADENTER -> {
-                    accept(matches.get(selected));
+                    if (onSubmit != null && e.key() != InputConstants.KEY_TAB && !navigated) {
+                        submit(getValue());
+                    } else {
+                        accept(matches.get(selected));
+                    }
                     return true;
                 }
                 default -> {
                 }
             }
+        }
+        if (onSubmit != null && (e.key() == InputConstants.KEY_RETURN || e.key() == InputConstants.KEY_NUMPADENTER)) {
+            submit(getValue());
+            return true;
         }
         return super.keyPressed(e);
     }

@@ -85,6 +85,8 @@ public final class MobEditorScreen extends StacksmithScreen {
             Map.entry("minecraft:spawn_reinforcements", "Zombies: chance (0 to 1) to call more zombies when hit"));
     private static double listScroll, midScroll;
     private static String search = "";
+    /** Put the cursor back in the tag box after the cards are rebuilt (adding several in a row). */
+    private static boolean refocusTags;
     private static final Map<String, ItemStack> EGGS = new HashMap<>();
     private static final EntitySchema SCHEMA = EntitySchema.bundled();
     /** Mobs that shoot the arrow held in their off hand. */
@@ -261,6 +263,7 @@ public final class MobEditorScreen extends StacksmithScreen {
         }
         mid.add(new EquipmentCard(mob));
         mid.add(new FlagsCard(mob));
+        mid.add(new TagsCard(mob));
         mid.add(new StatsCard(mob));
         mid.add(new EffectsCard(mob));
         mid.add(new DataCard(mob));
@@ -275,12 +278,15 @@ public final class MobEditorScreen extends StacksmithScreen {
         if (onDone == null) {
             getEgg = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.get_egg"), b -> giveEgg())
                     .bounds(x, y, w, 20).build());
-            summonHere = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.summon"), b ->
-                    toast(Delivery.run(Commands.summon(root, "~ ~ ~", style())), true)).bounds(x, y + 22, w, 20).build());
+            summonHere = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.summon"), b -> {
+                EntityTags.useAll(root);
+                toast(Delivery.run(Commands.summon(root, "~ ~ ~", style())), true);
+            }).bounds(x, y + 22, w, 20).build());
             getCommandBlock = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.get_command_block"), b -> giveCommandBlock())
                     .bounds(x, y + 44, w, 20).build());
             y += 22;
             toSpawner = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.to_spawner"), b -> {
+                EntityTags.useAll(root);
                 SpawnerSpec fresh = new SpawnerSpec();
                 fresh.entries().add(new SpawnerSpec.Entry(root.copy(), 1).classicLight());
                 WorldSpawner.link(fresh, null);
@@ -288,8 +294,10 @@ public final class MobEditorScreen extends StacksmithScreen {
             }).bounds(x, y + 44, w, 20).tooltip(Tooltip.create(Component.translatable("stacksmith.tooltip.to_spawner"))).build());
             y += 66;
         }
-        addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.copy_summon"), b ->
-                        toast(Delivery.copy("/" + command), true))
+        addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.copy_summon"), b -> {
+                    EntityTags.useAll(root);
+                    toast(Delivery.copy("/" + command), true);
+                })
                 .bounds(x, y, w, 20).tooltip(Tooltip.create(Component.translatable("stacksmith.tooltip.copy_summon"))).build());
     }
 
@@ -317,6 +325,7 @@ public final class MobEditorScreen extends StacksmithScreen {
 
     /** A command block that summons this mob on top of itself once, when placed: no chat limit. */
     private void giveCommandBlock() {
+        EntityTags.useAll(root);
         String summon = Commands.summon(root, "~ ~1 ~", style());
         Nbt name = root.data().get(EntitySpec.Keys.CUSTOM_NAME);
         String label = name != null && TextMarkup.fromComponent(name) != null ? TextMarkup.plain(TextMarkup.fromComponent(name)) : Ids.pretty(root.id());
@@ -326,6 +335,7 @@ public final class MobEditorScreen extends StacksmithScreen {
     }
 
     private void giveEgg() {
+        EntityTags.useAll(root);
         String egg = McEntities.spawnEggId(root.id());
         if (egg == null) {
             return;
@@ -907,6 +917,79 @@ public final class MobEditorScreen extends StacksmithScreen {
                 chips.get(i).setY(y + i / cols * 16);
             }
             return (chips.size() + cols - 1) / cols * 16 - 2;
+        }
+    }
+
+    /**
+     * Scoreboard tags, for {@code @e[tag=...]}: one chip per tag (click to remove) and a box that
+     * suggests the tags used in this world and in its datapacks. Tags… opens the full list.
+     */
+    private final class TagsCard extends Card {
+        private final List<Chip> chips = new ArrayList<>();
+        private final SuggestBox add;
+
+        TagsCard(EntitySpec mob) {
+            super("Tags", 0xFF7FDBCA, "Tags pick this mob out in commands: @e[tag=boss]. Type one and press Enter; "
+                    + "suggestions come from tags used in this world and its datapacks.");
+            headerButton("Tags…", 40, "All the tags known in this world, the datapack scan, and showing or hiding datapack tags",
+                    () -> minecraft.setScreenAndShow(new TagsScreen(MobEditorScreen.this, mob, () -> {
+                        changed();
+                    })));
+            List<String> tags = mob.tags();
+            for (String t : tags) {
+                chips.add(body(Chip.of(t + "  ✕", font.width(t + "  ✕") + 10, 14, () -> {
+                    List<String> now = mob.tags();
+                    now.remove(t);
+                    mob.tags(now);
+                    changed();
+                    rebuild();
+                }).tip("Remove the tag " + t)));
+            }
+            // Suggests what it could still get: not the tags it already has.
+            add = body(new SuggestBox(font, 100, 14, Component.literal("Add a tag"),
+                    () -> EntityTags.known().stream().filter(t -> !mob.tags().contains(t)).toList()));
+            add.setHint(Component.literal(tags.isEmpty() ? "add a tag, e.g. boss…" : "add another…"));
+            add.setMaxLength(64);
+            add.onSubmit(t -> {
+                if (!io.github.tjhgibbs.stacksmith.core.tags.TagScan.NAME.matcher(t).matches()) {
+                    toast(Component.literal("Tags are one word: letters, digits and _ - . +"), false);
+                    return;
+                }
+                List<String> now = mob.tags();
+                if (!now.contains(t)) {
+                    now.add(t);
+                    mob.tags(now);
+                    EntityTags.use(List.of(t));
+                    changed();
+                }
+                refocusTags = true;
+                rebuild();
+            });
+            if (refocusTags) {
+                refocusTags = false;
+                focusSoon(add);
+            }
+        }
+
+        @Override
+        protected int layoutBody(int x, int y, int w) {
+            int cx = x, cy = y;
+            for (Chip c : chips) {
+                if (cx > x && cx + c.getWidth() > x + w) {
+                    cx = x;
+                    cy += 16;
+                }
+                c.setX(cx);
+                c.setY(cy);
+                cx += c.getWidth() + 2;
+            }
+            if (!chips.isEmpty()) {
+                cy += 16;
+            }
+            add.setX(x);
+            add.setY(cy);
+            add.setWidth(w);
+            return cy + 14 - y;
         }
     }
 
