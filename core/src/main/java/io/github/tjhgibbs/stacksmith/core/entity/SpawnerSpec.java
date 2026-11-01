@@ -244,7 +244,7 @@ public final class SpawnerSpec {
 
     public static SpawnerSpec fromTag(Nbt.Compound tag) {
         SpawnerSpec s = new SpawnerSpec();
-        Nbt.Compound rest = tag.copy();
+        Nbt.Compound rest = io.github.tjhgibbs.stacksmith.core.container.BlockTemplate.data(tag).copy();
         rest.remove("id");
         for (Setting st : Setting.values()) {
             if (rest.remove(st.key) instanceof Nbt.Num n) {

@@ -128,6 +128,7 @@ public final class PresetsScreen extends StacksmithScreen {
                     yield markup != null && !markup.isBlank() ? TextMarkup.plain(markup) : Ids.pretty(item.id());
                 }
                 case MOB -> mobName(EntitySpec.fromTag(data));
+                case CHEST -> "Chest template";
                 case SPAWNER -> mobName(SpawnerSpec.fromTag(data).primary()) + " spawner";
             };
         } catch (RuntimeException e) {
@@ -149,6 +150,7 @@ public final class PresetsScreen extends StacksmithScreen {
                     yield r != null && r.ok() ? r.stack() : ItemStack.EMPTY;
                 }
                 case MOB -> MobEditorScreen.egg(EntitySpec.fromTag(data).id());
+                case CHEST -> new ItemStack(net.minecraft.world.item.Items.CHEST);
                 case SPAWNER -> MobEditorScreen.egg(SpawnerSpec.fromTag(data).primary().id());
             };
         } catch (RuntimeException e) {

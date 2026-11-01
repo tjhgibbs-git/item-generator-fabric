@@ -21,7 +21,7 @@ import java.util.stream.Stream;
  */
 public final class Presets {
     public enum Kind {
-        ITEM("items"), MOB("mobs"), SPAWNER("spawners");
+        ITEM("items"), MOB("mobs"), SPAWNER("spawners"), CHEST("chests");
 
         public final String folder;
 

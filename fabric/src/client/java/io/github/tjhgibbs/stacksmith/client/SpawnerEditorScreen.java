@@ -159,11 +159,11 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                 () -> minecraft.setScreenAndShow(new SpawnerLibraryScreen(this, spawner, data -> {
                     // Stays tied to the block it was editing, so Overwrite puts the loaded one there.
                     SpawnerSpec loaded = SpawnerSpec.fromTag(data);
-                    WorldSpawner.link(loaded, Session.spawnerPos);
+                    WorldSpawner.link(loaded, null);
                     SpawnerEditorScreen fresh = new SpawnerEditorScreen(parent);
                     minecraft.setScreenAndShow(fresh);
                     fresh.toast(Component.literal("Loaded " + SpawnerLog.title(loaded)
-                            + (Session.spawnerPos != null ? ": Overwrite puts it in the spawner" : "")), true);
+                            + " as a reusable template"), true);
                 })),
                 "Start a blank spawner, not tied to any block",
                 () -> {

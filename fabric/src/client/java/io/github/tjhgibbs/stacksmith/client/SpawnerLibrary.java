@@ -89,7 +89,8 @@ public final class SpawnerLibrary {
     static String star(SpawnerSpec spawner, String name) {
         try {
             String n = name != null ? name : PRESETS.freeName(Presets.Kind.SPAWNER, SpawnerLog.title(spawner) + " spawner");
-            return PRESETS.save(Presets.Kind.SPAWNER, n, spawner.toTag());
+            return PRESETS.save(Presets.Kind.SPAWNER, n, io.github.tjhgibbs.stacksmith.core.container.BlockTemplate.save(
+                    io.github.tjhgibbs.stacksmith.core.command.Commands.setSpawner(spawner, "~ ~ ~", io.github.tjhgibbs.stacksmith.core.command.Commands.Style.DEFAULT)));
         } catch (IOException e) {
             return null;
         } finally {

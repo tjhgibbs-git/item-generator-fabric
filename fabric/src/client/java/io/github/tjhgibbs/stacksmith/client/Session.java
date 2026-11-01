@@ -7,6 +7,8 @@ import net.minecraft.core.BlockPos;
 
 /** What was being edited, kept while the game runs so closing a screen loses nothing. */
 public final class Session {
+    public static io.github.tjhgibbs.stacksmith.core.container.ChestSpec chest = new io.github.tjhgibbs.stacksmith.core.container.ChestSpec();
+    public static ChestIndex.Entry chestLink;
     public static ItemSpec item = new ItemSpec("diamond_sword");
     public static EntitySpec mob = new EntitySpec("zombie");
     public static SpawnerSpec spawner = new SpawnerSpec();
