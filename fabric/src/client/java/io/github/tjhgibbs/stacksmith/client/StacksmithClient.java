@@ -19,6 +19,7 @@ public final class StacksmithClient implements ClientModInitializer {
         CommandQueue.register();
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
             SpawnerBatch.tick();
+            ChestIndex.tick();
             CommandQueue.tick();
             RangeView.tick();
             // Key mappings only see presses while no screen has the input, so this never opens
@@ -26,7 +27,15 @@ public final class StacksmithClient implements ClientModInitializer {
             while (openKey.consumeClick()) {
                 // Looking at a spawner: edit that spawner. Otherwise the tab used last.
                 net.minecraft.core.BlockPos spawner = WorldSpawner.lookedAtSpawner();
-                if (spawner != null && spawner.equals(Session.spawnerPos)) {
+                var container = WorldSpawner.lookedAtBlockEntity();
+                if (ChestIndex.supported(container) && Delivery.canUse("data") && !ChestIndex.busy && !SpawnerBatch.searching()) {
+                    ChestIndex.load(ChestIndex.entry(container, io.github.tjhgibbs.stacksmith.core.nbt.Nbt.compound()), e -> {
+                        if (Session.chestLink == null || !Session.chestLink.key().equals(e.key())) {
+                            Session.chest=e.chest().copy(); Session.chestLink=e;
+                        }
+                        mc.setScreenAndShow(new ChestEditorScreen(null));
+                    });
+                } else if (spawner != null && spawner.equals(Session.spawnerPos)) {
                     // Already editing this one: keep any unsaved changes.
                     mc.setScreenAndShow(new SpawnerEditorScreen(null));
                 } else if (spawner != null) {

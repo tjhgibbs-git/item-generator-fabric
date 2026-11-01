@@ -59,7 +59,7 @@ public final class WorldSpawner {
     /** Loads the spawner at {@code pos} into the session (linked to that block), then runs {@code then}. */
     public static void load(BlockPos pos, Runnable then) {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null || Delivery.registries() == null || !(mc.level.getBlockEntity(pos) instanceof SpawnerBlockEntity be)) {
+        if (ChestIndex.busy || mc.level == null || Delivery.registries() == null || !(mc.level.getBlockEntity(pos) instanceof SpawnerBlockEntity be)) {
             return;
         }
         read(be, data -> {

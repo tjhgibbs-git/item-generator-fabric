@@ -35,6 +35,44 @@ import java.util.List;
 public class BridgeGameTests {
     private static final String EMPTY_64 = "stacksmith-gametest:empty64";
 
+    @GameTest(structure = EMPTY_64, maxTicks = 20)
+    public void chestSlotsAndNestedShulkersSurviveCommandsAndItemCodecs(GameTestHelper h) {
+        var reg = h.getLevel().registryAccess();
+        var nested = new io.github.tjhgibbs.stacksmith.core.container.ChestSpec();
+        nested.block("blue_shulker_box");
+        nested.slot(26, new ItemSpec("emerald", 12));
+        var chest = new io.github.tjhgibbs.stacksmith.core.container.ChestSpec();
+        chest.slot(0, richItem());
+        chest.slot(13, nested.item().set("custom_name", TextMarkup.toComponent("Supplies", true)));
+        chest.slot(26, new ItemSpec("diamond", 64));
+        var asItem = McItems.toStack(chest.item(), reg);
+        if (!asItem.ok()) { h.fail("container item rejected: " + asItem.error()); return; }
+        var backItem = io.github.tjhgibbs.stacksmith.core.container.ChestSpec.fromItem(McItems.fromStack(asItem.stack(), reg));
+        if (!chest.slot(13).equals(backItem.slot(13)) || !chest.slot(26).equals(backItem.slot(26))) {
+            h.fail("item codec changed container contents"); return;
+        }
+        BlockPos pos = h.absolutePos(new BlockPos(5, 2, 5));
+        String at = pos.getX() + " " + pos.getY() + " " + pos.getZ();
+        var server = h.getLevel().getServer();
+        var source = server.createCommandSourceStack().withSuppressedOutput();
+        server.getCommands().performPrefixedCommand(source, "setblock " + at + " chest{Items:[{Slot:1b,id:'minecraft:dirt',count:64}]}");
+        for (String command : chest.write(at, "trapped_chest[facing=east]", true, Commands.CHAT_LIMIT)) {
+            server.getCommands().performPrefixedCommand(source, command);
+        }
+        var saved = McNbt.fromGame(h.getLevel().getBlockEntity(pos).saveWithoutMetadata(reg));
+        var back = new io.github.tjhgibbs.stacksmith.core.container.ChestSpec("trapped_chest", saved);
+        if (back.slot(1) != null || !chest.slot(0).equals(back.slot(0)) || !chest.slot(13).equals(back.slot(13)) || !chest.slot(26).equals(back.slot(26))) {
+            h.fail("commands changed chest slots: " + saved); return;
+        }
+        server.getCommands().performPrefixedCommand(source, "data remove block " + at + " Items");
+        var box = new io.github.tjhgibbs.stacksmith.core.container.ChestSpec();
+        box.block("red_shulker_box"); box.slot(26, richItem());
+        for (String command : box.write(at, "red_shulker_box", true, Commands.CHAT_LIMIT)) server.getCommands().performPrefixedCommand(source, command);
+        var boxBack = new io.github.tjhgibbs.stacksmith.core.container.ChestSpec("red_shulker_box", McNbt.fromGame(h.getLevel().getBlockEntity(pos).saveWithoutMetadata(reg)));
+        if (!richItem().equals(boxBack.slot(26))) { h.fail("shulker conversion lost slot 27"); return; }
+        h.succeed();
+    }
+
     private static ItemSpec richItem() {
         return new ItemSpec("diamond_sword")
                 .set("custom_name", TextMarkup.toComponent("&6&lExcalibur", true))

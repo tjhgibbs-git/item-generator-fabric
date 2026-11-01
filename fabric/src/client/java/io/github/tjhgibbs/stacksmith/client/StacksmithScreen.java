@@ -24,6 +24,7 @@ public abstract class StacksmithScreen extends Screen {
     public enum Tab {
         SPAWNER("Spawner", "Mob spawners: what they spawn, how often, and how many"),
         MOB("Mob", "Mobs: type, name, gear, behaviour, stats and effects; summon them or put them in a spawner"),
+        CHEST("Chests", "Create containers, edit their slots, or find them in your world"),
         ITEM("Item", "Items: name, lore, enchantments and every other component");
 
         final String label, tip;
@@ -39,6 +40,7 @@ public abstract class StacksmithScreen extends Screen {
 
     static Screen open(Tab tab, Screen parent) {
         return switch (tab) {
+            case CHEST -> new ChestEditorScreen(parent);
             case ITEM -> new ItemEditorScreen(parent);
             case MOB -> new MobEditorScreen(parent);
             case SPAWNER -> new SpawnerEditorScreen(parent);

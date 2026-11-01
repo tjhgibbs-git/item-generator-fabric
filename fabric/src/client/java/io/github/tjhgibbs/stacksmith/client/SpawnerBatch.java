@@ -97,6 +97,7 @@ public final class SpawnerBatch {
     public static void search(Runnable done) {
         Minecraft mc = Minecraft.getInstance();
         BlockPos c = centre();
+        if (ChestIndex.busy) { status = "Wait for container indexing to finish."; return; }
         if (mc.level == null || c == null) {
             return;
         }
