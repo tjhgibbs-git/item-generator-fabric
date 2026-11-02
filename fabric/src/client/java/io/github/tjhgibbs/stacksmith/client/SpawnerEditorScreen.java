@@ -171,18 +171,12 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                     minecraft.setScreenAndShow(new SpawnerEditorScreen(parent));
                 });
         BlockPos looked = WorldSpawner.lookedAtSpawner();
-        // The short label when the full one would run into the title.
-        String loadLabel = I18n.get("stacksmith.button.load_looked_at");
-        if (width - PAD - HEADER_RIGHT - 4 - font.width(loadLabel) - 16 < (width + font.width(title)) / 2 + 4) {
-            loadLabel = I18n.get("stacksmith.button.load_looked_at_short");
-        }
-        int lw = font.width(loadLabel) + 16;
-        Chip load = addRenderableWidget(Chip.of(loadLabel, lw, 14,
+        Chip load = addRenderableWidget(Chip.of("Load", 32, 12,
                 () -> WorldSpawner.load(looked, () -> minecraft.setScreenAndShow(new SpawnerEditorScreen(parent))))
-                .at(width - PAD - HEADER_RIGHT - 4 - lw, 5)
+                .at(PAD + leftW() - 32, TOP)
                 .tip(I18n.get(looked != null ? "stacksmith.tooltip.load_looked_at" : "stacksmith.tooltip.load_looked_at_none")));
         load.active = looked != null && !looked.equals(Session.spawnerPos);
-        loadChipX = load.getX();
+        loadChipX = width;
         if (Session.spawnerPos != null && (!WorldSpawner.exists(Session.spawnerPos)
                 || !minecraft.level.dimension().identifier().toString().equals(Session.spawnerDimension))) {
             Session.spawnerPos = null; // broken or out of reach: placing makes a new one
@@ -379,8 +373,8 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         commandBox = addRenderableWidget(new EditBox(font, PAD, y + 2, width - PAD * 2 - 64 - 110, 16, Component.literal("Command")));
         commandBox.setMaxLength(Commands.COMMAND_BLOCK_LIMIT);
         commandBox.setEditable(false);
-        addRenderableWidget(Chip.of("Find in world…", 100, 20,
-                () -> minecraft.setScreenAndShow(new SpawnerBatchScreen(this)))
+        addRenderableWidget(Chip.of("Find copies…", 100, 20,
+                () -> minecraft.setScreenAndShow(new SpawnerBatchScreen(this, true)))
                 .at(width - PAD - 164, y).tip("Discover spawners across the world, inspect copies and rebalance them"));
         addRenderableWidget(Button.builder(Component.translatable("gui.done"), b -> onClose()).bounds(width - PAD - 60, y, 60, 20).build());
     }
@@ -751,10 +745,10 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         private final Chip open;
 
         BatchCard() {
-            super("Find in world", 0xFFB48CFF,
-                    "Find nearby copies of the loaded spawner, then review your changes before sending them.");
-            open = body(Chip.of("Find copies in world…", 120, 18,
-                    () -> minecraft.setScreenAndShow(new SpawnerBatchScreen(SpawnerEditorScreen.this)))
+            super("Find copies", 0xFFB48CFF,
+                    "Find copies of this design across the world, then review your changes before applying them.");
+            open = body(Chip.of("Find copies…", 120, 18,
+                    () -> minecraft.setScreenAndShow(new SpawnerBatchScreen(SpawnerEditorScreen.this, true)))
                     .tip("Find matching spawners in loaded chunks. Your unsaved edits become the replacement."));
         }
 

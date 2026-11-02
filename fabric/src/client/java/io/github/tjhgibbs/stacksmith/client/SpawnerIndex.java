@@ -2,6 +2,10 @@ package io.github.tjhgibbs.stacksmith.client;
 
 import io.github.tjhgibbs.stacksmith.core.entity.SpawnerSpec;
 import io.github.tjhgibbs.stacksmith.core.nbt.Nbt;
+import io.github.tjhgibbs.stacksmith.core.index.RegionCacheFile;
+import io.github.tjhgibbs.stacksmith.core.index.RegionCacheFile.Stamp;
+import io.github.tjhgibbs.stacksmith.core.nbt.Snbt;
+import io.github.tjhgibbs.stacksmith.core.nbt.SnbtException;
 import io.github.tjhgibbs.stacksmith.mod.McNbt;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
@@ -34,8 +38,12 @@ public final class SpawnerIndex {
     static int skipped;
     private static volatile int generation;
     private static Object world;
-    private static String sourceDimension;
-    private static BlockPos sourcePos;
+    private static Map<String, Region> regions = Map.of();
+    static volatile int regionsRead, regionsReused;
+    static long savedAt;
+    private static volatile String cacheWarning = "";
+    private static final int CACHE_VERSION = 1;
+    private static final String CACHE_FILE = "stacksmith/spawner-index-v1.bin.gz";
     private static Set<String> fullChunks = Set.of();
 
     public static boolean available() { return Minecraft.getInstance().getSingleplayerServer() != null; }
@@ -57,14 +65,15 @@ public final class SpawnerIndex {
     public static void cancel() {
         generation++;
         busy = false;
-        indexed = false;
-        entries.clear();
-        fullChunks = Set.of();
-        status = "Discovery cancelled. No spawners changed.";
+        status = indexed ? "Update cancelled · previous saved results retained" : "Discovery cancelled. No spawners changed.";
     }
 
     public static List<Entry> matches(SpawnerSpec reference) {
-        if (busy || !current() || reference == null) return List.of();
+        return matches(reference, Session.spawnerDimension, Session.spawnerPos);
+    }
+
+    public static List<Entry> matches(SpawnerSpec reference, String sourceDimension, BlockPos sourcePos) {
+        if (!current() || reference == null) return List.of();
         return entries.values().stream()
                 .filter(e -> !(e.dimension().equals(sourceDimension) && e.pos().equals(sourcePos)))
                 .filter(e -> SpawnerBatch.match == SpawnerBatch.Match.IDENTICAL
@@ -73,6 +82,17 @@ public final class SpawnerIndex {
                         .thenComparingInt(e -> e.pos().getX()).thenComparingInt(e -> e.pos().getY())
                         .thenComparingInt(e -> e.pos().getZ()))
                 .toList();
+    }
+
+    /** Update the displayed snapshot after a verified write; disk region caches remain independent. */
+    public static void recordUpdated(Entry previous, Nbt.Compound after) {
+        Object expected = world;
+        Nbt.Compound copied = after.copy();
+        Minecraft.getInstance().execute(() -> {
+            if (expected != world || !current()) return;
+            Entry fresh = entry(previous.dimension(), previous.pos(), copied);
+            entries.put(fresh.key(), fresh);
+        });
     }
 
     /** Returns an error, or null when the explicit teleport command was submitted. */
@@ -108,7 +128,13 @@ public final class SpawnerIndex {
                 CompletableFuture.delayedExecutor(100, java.util.concurrent.TimeUnit.MILLISECONDS));
     }
 
-    public static void start(Runnable done) {
+    /** Reopen saved results without saving or rescanning this world each time. */
+    public static void ensure(Runnable done) { refresh(false, done); }
+
+    /** Explicit update: flush dirty world data, then read only changed region files. */
+    public static void start(Runnable done) { refresh(true, done); }
+
+    private static void refresh(boolean forceUpdate, Runnable done) {
         Minecraft mc = Minecraft.getInstance();
         var server = mc.getSingleplayerServer();
         if (busy) return;
@@ -117,32 +143,64 @@ public final class SpawnerIndex {
             done.run();
             return;
         }
+        boolean sameWorld = world == server;
+        if (!sameWorld) {
+            generation++;
+            entries.clear();
+            regions = Map.of();
+            fullChunks = Set.of();
+            indexed = false;
+            savedAt = 0;
+        }
         int gen = ++generation;
         world = server;
-        sourceDimension = Session.spawnerDimension != null ? Session.spawnerDimension
-                : mc.level.dimension().identifier().toString();
-        sourcePos = Session.spawnerPos;
         busy = true;
-        indexed = false;
-        skipped = 0;
-        entries.clear();
-        fullChunks = Set.of();
-        status = "Saving world snapshot…";
+        regionsRead = regionsReused = 0;
+        cacheWarning = "";
+        status = indexed && !forceUpdate ? "Refreshing live spawners…" : "Opening saved spawner index…";
         Path root = server.getWorldPath(LevelResource.ROOT);
-        // Flush the server's dirty chunks before reading disk. Ready-to-send chunks alone
-        // miss recently visited chunks that are still resident but outside player tracking.
-        server.submit(() -> {
-            if (gen == generation) server.saveEverything(true, true, false);
-        }).thenApplyAsync(ignored -> {
-            if (gen == generation) status = "Reading saved regions…";
-            return scan(root, gen);
-        }).whenComplete((scan, error) -> mc.execute(() -> {
+        Map<String, Region> previous = regions;
+        boolean reuseMemory = sameWorld && indexed && !forceUpdate;
+        Map<String, Entry> remembered = reuseMemory ? new LinkedHashMap<>(entries) : null;
+        Set<String> rememberedFull = fullChunks;
+        CompletableFuture<Scan> read;
+        if (reuseMemory) {
+            regionsReused = previous.size();
+            read = CompletableFuture.completedFuture(merge(previous, savedAt, false));
+        } else {
+            read = CompletableFuture.supplyAsync(() -> {
+                if (!forceUpdate && !sameWorld) {
+                    Scan cached = loadCache(root);
+                    if (cached.cached()) mc.execute(() -> {
+                        if (gen != generation || server != mc.getSingleplayerServer()) return;
+                        entries.clear(); entries.putAll(cached.entries());
+                        regions = cached.regions(); fullChunks = Set.copyOf(cached.full());
+                        savedAt = cached.savedAt(); skipped = cached.skipped(); indexed = true;
+                        // Cached rows are immediately usable for browsing while file fingerprints
+                        // are checked; writes remain disabled until the refresh completes.
+                        done.run();
+                    });
+                    return cached;
+                }
+                return new Scan(previous, savedAt, false);
+            }).thenCompose(cached -> {
+                if (gen != generation) return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException());
+                boolean saveFirst = forceUpdate || !cached.cached();
+                CompletableFuture<Void> saved = saveFirst ? server.submit(() -> {
+                    if (gen == generation) { status = "Saving world snapshot…"; server.saveEverything(true, true, false); }
+                }) : CompletableFuture.completedFuture(null);
+                return saved.thenApplyAsync(ignored -> {
+                    if (gen != generation) throw new java.util.concurrent.CancellationException();
+                    return scan(root, gen, cached.regions());
+                });
+            });
+        }
+        read.whenComplete((scan, error) -> mc.execute(() -> {
             if (gen != generation) return;
-            if (server != mc.getSingleplayerServer()) { cancel(); status = "World changed. Discover again."; done.run(); return; }
+            if (server != mc.getSingleplayerServer()) { cancel(); status = "World changed. Open this world's index again."; done.run(); return; }
             if (error != null) {
                 busy = false;
-                skipped++;
-                status = "Discovery failed. Try again.";
+                status = indexed ? "Update failed · previous saved results retained" : "Could not open the index. Try Update index.";
                 done.run();
                 return;
             }
@@ -151,8 +209,8 @@ public final class SpawnerIndex {
             // not a transaction with world saving.
             server.execute(() -> {
                 try {
-                    Map<String, Entry> merged = new LinkedHashMap<>(scan.entries());
-                    Set<String> full = new HashSet<>(scan.full());
+                    Map<String, Entry> merged = new LinkedHashMap<>(remembered != null ? remembered : scan.entries());
+                    Set<String> full = new HashSet<>(remembered != null ? rememberedFull : scan.full());
                     Set<String> liveChunks = new HashSet<>();
                     Map<String, Entry> live = new LinkedHashMap<>();
                     int[] failed = {scan.skipped()};
@@ -177,22 +235,24 @@ public final class SpawnerIndex {
                     mc.execute(() -> {
                         if (gen != generation) return;
                         if (server != mc.getSingleplayerServer()) { cancel(); status = "World changed. Discover again."; done.run(); return; }
+                        entries.clear();
                         entries.putAll(merged);
+                        regions = scan.regions();
+                        savedAt = scan.savedAt();
                         fullChunks = Set.copyOf(full);
                         skipped = failed[0];
                         busy = false;
                         indexed = true;
-                        status = entries.size() + " spawners · all saved dimensions + loaded chunks"
-                                + (skipped > 0 ? " · " + skipped + " unread (partial)" : " · session snapshot");
+                        status = entries.size() + " spawners · " + regionsRead + " regions read · " + regionsReused + " reused"
+                                + (skipped > 0 ? " · " + skipped + " unread (partial)" : " · saved index")
+                                + cacheWarning;
                         done.run();
                     });
                 } catch (RuntimeException overlayError) {
                     mc.execute(() -> {
                         if (gen != generation) return;
                         busy = false;
-                        indexed = false;
-                        skipped++;
-                        status = "Could not read current spawners. Discover again.";
+                        status = indexed ? "Could not refresh live spawners · saved results retained" : "Could not read current spawners. Try Update index.";
                         done.run();
                     });
                 }
@@ -200,75 +260,172 @@ public final class SpawnerIndex {
         }));
     }
 
-    private record Scan(Map<String, Entry> entries, Set<String> full, int skipped) {}
+    private record Region(Stamp stamp, Map<String, Entry> entries, Set<String> full, int skipped) {}
+    private record Scan(Map<String, Region> regions, long savedAt, boolean cached) {
+        Map<String, Entry> entries() { Map<String, Entry> out = new LinkedHashMap<>(); regions.values().forEach(r -> out.putAll(r.entries())); return out; }
+        Set<String> full() { Set<String> out = new HashSet<>(); regions.values().forEach(r -> out.addAll(r.full())); return out; }
+        int skipped() { return regions.values().stream().mapToInt(Region::skipped).sum(); }
+    }
 
-    private static Scan scan(Path root, int gen) {
-        Map<String, Entry> found = new LinkedHashMap<>();
-        Set<String> full = new HashSet<>();
-        int unread = 0, regions = 0;
+    private static Scan merge(Map<String, Region> regions, long savedAt, boolean cached) {
+        return new Scan(Map.copyOf(regions), savedAt, cached);
+    }
+
+    private static Scan scan(Path root, int gen, Map<String, Region> previous) {
+        Map<String, Region> next = new LinkedHashMap<>();
+        int checked = 0;
         try (var paths = Files.walk(root)) {
             List<Path> files = paths.filter(p -> p.getParent() != null
                     && p.getParent().getFileName().toString().equals("region")
                     && p.getFileName().toString().matches("r\\.-?\\d+\\.-?\\d+\\.mca")).sorted().toList();
             for (Path path : files) {
-                if (gen != generation) break;
-                status = "Reading saved regions… " + (++regions) + "/" + files.size();
+                if (gen != generation) throw new java.util.concurrent.CancellationException();
                 String relative = root.relativize(path.getParent().getParent()).toString().replace('\\', '/');
                 String dim = relative.equals("DIM-1") ? "minecraft:the_nether"
                         : relative.equals("DIM1") ? "minecraft:the_end"
                         : relative.startsWith("dimensions/") ? relative.substring(11).replaceFirst("/", ":")
                         : relative.isEmpty() ? "minecraft:overworld" : null;
-                if (dim == null) continue; // Do not index backups stored below the world root.
-                String[] name = path.getFileName().toString().split("\\.");
-                int regionX = Integer.parseInt(name[1]), regionZ = Integer.parseInt(name[2]);
-                try (RandomAccessFile file = new RandomAccessFile(path.toFile(), "r")) {
-                    int[] offsets = new int[1024];
-                    for (int i = 0; i < offsets.length; i++) offsets[i] = file.readInt();
-                    for (int i = 0; i < offsets.length; i++) {
-                        if (gen != generation) break;
-                        int offset = offsets[i];
-                        if (offset == 0) continue;
-                        try {
-                            int sector = offset >>> 8, sectors = offset & 255;
-                            if (sector < 2 || sectors == 0) throw new IOException("Invalid location");
-                            file.seek((long) sector * 4096);
-                            int length = file.readInt();
-                            int compression = file.readUnsignedByte();
-                            if (length < 1 || length > sectors * 4096 - 4 || compression < 1 || compression > 3)
-                                throw new IOException("Unsupported region payload");
-                            byte[] bytes = new byte[length - 1];
-                            file.readFully(bytes);
-                            InputStream raw = new ByteArrayInputStream(bytes);
-                            InputStream stream = switch (compression) {
-                                case 1 -> new GZIPInputStream(raw);
-                                case 2 -> new InflaterInputStream(raw);
-                                case 3 -> raw;
-                                default -> throw new IOException("Compression");
-                            };
-                            Nbt.Compound chunk;
-                            try (DataInputStream input = new DataInputStream(stream)) {
-                                chunk = McNbt.fromGame(NbtIo.read(input, NbtAccounter.create(64L * 1024 * 1024)));
-                            }
-                            String chunkStatus = chunk.getString("Status", "");
-                            if (chunkStatus.isEmpty() || chunk.getCompound("Level") != null) { unread++; continue; }
-                            if (chunkStatus.equals("minecraft:full") || chunkStatus.equals("full"))
-                                full.add(chunkKey(dim, regionX * 32 + (i & 31), regionZ * 32 + (i >> 5)));
-                            Nbt.List bes = chunk.getList("block_entities");
-                            if (bes == null) continue;
-                            for (Nbt n : bes.items()) if (n instanceof Nbt.Compound data
-                                    && data.getString("id", "").equals("minecraft:mob_spawner")) {
-                                BlockPos pos = new BlockPos((int) data.getLong("x", 0), (int) data.getLong("y", 0), (int) data.getLong("z", 0));
-                                Nbt.Compound definition = data.copy();
-                                for (String metadata : new String[]{"keepPacked", "x", "y", "z", "id"})
-                                    definition.remove(metadata); // Storage metadata, not part of the spawn definition.
-                                Entry entry = new Entry(dim, pos, SpawnerSpec.fromTag(definition), data.copy());
-                                found.put(entry.key(), entry);
-                            }
-                        } catch (Exception ex) { unread++; }
+                if (dim == null) continue;
+                String key = root.relativize(path).toString().replace('\\', '/');
+                status = "Checking regions… " + (++checked) + "/" + files.size();
+                try {
+                    Stamp before = RegionCacheFile.stamp(path);
+                    Region old = previous.get(key);
+                    if (old != null && old.skipped() == 0 && old.stamp().equals(before)) {
+                        next.put(key, old); regionsReused++; continue;
                     }
-                } catch (IOException ex) { unread++; }
+                    regionsRead++;
+                    Region parsed = readRegion(path, dim, before, gen);
+                    // A region rewritten during the read is not eligible for reuse next time.
+                    if (!before.equals(RegionCacheFile.stamp(path))) parsed = new Region(before, parsed.entries(), parsed.full(), parsed.skipped() + 1);
+                    next.put(key, parsed);
+                } catch (IOException ex) {
+                    // Do not retain stale entries/full-chunk safety claims for an unread region.
+                    next.put(key, new Region(new Stamp(-1, -1, -1), Map.of(), Set.of(), 1));
+                }
+            }
+        } catch (IOException ex) { throw new java.io.UncheckedIOException(ex); }
+        Scan scan = merge(next, System.currentTimeMillis(), true);
+        if (gen != generation) throw new java.util.concurrent.CancellationException();
+        try { saveCache(root, scan, gen); }
+        catch (IOException ex) { if (gen == generation) cacheWarning = " · cache could not be saved; results in memory only"; }
+        return scan;
+    }
+
+    private static Region readRegion(Path path, String dim, Stamp stamp, int gen) {
+        Map<String, Entry> found = new LinkedHashMap<>();
+        Set<String> full = new HashSet<>();
+        int unread = 0;
+        String[] name = path.getFileName().toString().split("\\.");
+        int regionX = Integer.parseInt(name[1]), regionZ = Integer.parseInt(name[2]);
+        try (RandomAccessFile file = new RandomAccessFile(path.toFile(), "r")) {
+            int[] offsets = new int[1024];
+            for (int i = 0; i < offsets.length; i++) offsets[i] = file.readInt();
+            for (int i = 0; i < offsets.length; i++) {
+                if (gen != generation) throw new java.util.concurrent.CancellationException();
+                int offset = offsets[i];
+                if (offset == 0) continue;
+                try {
+                    int sector = offset >>> 8, sectors = offset & 255;
+                    if (sector < 2 || sectors == 0) throw new IOException("Invalid location");
+                    file.seek((long) sector * 4096);
+                    int length = file.readInt();
+                    int compression = file.readUnsignedByte();
+                    if (length < 1 || length > sectors * 4096 - 4 || compression < 1 || compression > 3)
+                        throw new IOException("Unsupported region payload");
+                    byte[] bytes = new byte[length - 1]; file.readFully(bytes);
+                    InputStream raw = new ByteArrayInputStream(bytes);
+                    InputStream stream = switch (compression) {
+                        case 1 -> new GZIPInputStream(raw);
+                        case 2 -> new InflaterInputStream(raw);
+                        case 3 -> raw;
+                        default -> throw new IOException("Compression");
+                    };
+                    Nbt.Compound chunk;
+                    try (DataInputStream input = new DataInputStream(stream)) {
+                        chunk = McNbt.fromGame(NbtIo.read(input, NbtAccounter.create(64L * 1024 * 1024)));
+                    }
+                    String chunkStatus = chunk.getString("Status", "");
+                    if (chunkStatus.isEmpty() || chunk.getCompound("Level") != null) { unread++; continue; }
+                    if (chunkStatus.equals("minecraft:full") || chunkStatus.equals("full"))
+                        full.add(chunkKey(dim, regionX * 32 + (i & 31), regionZ * 32 + (i >> 5)));
+                    Nbt.List bes = chunk.getList("block_entities");
+                    if (bes == null) continue;
+                    for (Nbt n : bes.items()) if (n instanceof Nbt.Compound data
+                            && data.getString("id", "").equals("minecraft:mob_spawner")) {
+                        Entry entry = entry(dim, new BlockPos((int) data.getLong("x", 0), (int) data.getLong("y", 0), (int) data.getLong("z", 0)), data);
+                        found.put(entry.key(), entry);
+                    }
+                } catch (IOException | RuntimeException ex) { unread++; }
             }
         } catch (IOException ex) { unread++; }
-        return new Scan(found, full, unread);
+        return new Region(stamp, Map.copyOf(found), Set.copyOf(full), unread);
+    }
+
+    private static Entry entry(String dim, BlockPos pos, Nbt.Compound raw) {
+        Nbt.Compound definition = raw.copy();
+        for (String metadata : new String[]{"keepPacked", "x", "y", "z", "id"}) definition.remove(metadata);
+        return new Entry(dim, pos, SpawnerSpec.fromTag(definition), raw.copy());
+    }
+
+    private static Scan loadCache(Path root) {
+        Path file = root.resolve(CACHE_FILE);
+        try {
+            return RegionCacheFile.read(file, 0x53534958, CACHE_VERSION, in -> {
+            long time = in.readLong();
+            int count = bounded(in.readInt(), 100_000);
+            Map<String, Region> cached = new LinkedHashMap<>();
+            for (int r = 0; r < count; r++) {
+                String key = in.readUTF();
+                Stamp stamp = new Stamp(in.readLong(), in.readLong(), in.readLong());
+                int unread = bounded(in.readInt(), 1_000_000);
+                Set<String> full = new HashSet<>();
+                int chunks = bounded(in.readInt(), 1024);
+                for (int c = 0; c < chunks; c++) full.add(in.readUTF());
+                Map<String, Entry> entries = new LinkedHashMap<>();
+                int n = bounded(in.readInt(), 1_000_000);
+                for (int e = 0; e < n; e++) {
+                    String dim = in.readUTF();
+                    BlockPos pos = new BlockPos(in.readInt(), in.readInt(), in.readInt());
+                    int length = bounded(in.readInt(), 16 * 1024 * 1024);
+                    byte[] bytes = in.readNBytes(length);
+                    if (bytes.length != length) throw new EOFException();
+                    Entry entry;
+                    try { entry = entry(dim, pos, Snbt.parseCompound(new String(bytes, java.nio.charset.StandardCharsets.UTF_8))); }
+                    catch (SnbtException invalid) { throw new IOException("Invalid cached spawner", invalid); }
+                    entries.put(entry.key(), entry);
+                }
+                cached.put(key, new Region(stamp, Map.copyOf(entries), Set.copyOf(full), unread));
+            }
+            return merge(cached, time, true);
+            });
+        } catch (IOException | RuntimeException ex) {
+            return merge(Map.of(), 0, false); // Missing/corrupt/old caches are disposable, never world data.
+        }
+    }
+
+    private static int bounded(int value, int maximum) throws IOException {
+        if (value < 0 || value > maximum) throw new IOException("Invalid index count");
+        return value;
+    }
+
+    private static void saveCache(Path root, Scan scan, int gen) throws IOException {
+        Path target = root.resolve(CACHE_FILE);
+        RegionCacheFile.write(target, 0x53534958, CACHE_VERSION, () -> gen == generation, out -> {
+                out.writeLong(scan.savedAt());
+                out.writeInt(scan.regions().size());
+                for (var item : scan.regions().entrySet()) {
+                    out.writeUTF(item.getKey()); Region region = item.getValue();
+                    out.writeLong(region.stamp().size()); out.writeLong(region.stamp().modified()); out.writeLong(region.stamp().header());
+                    out.writeInt(region.skipped()); out.writeInt(region.full().size());
+                    for (String chunk : region.full()) out.writeUTF(chunk);
+                    out.writeInt(region.entries().size());
+                    for (Entry entry : region.entries().values()) {
+                        out.writeUTF(entry.dimension()); out.writeInt(entry.pos().getX()); out.writeInt(entry.pos().getY()); out.writeInt(entry.pos().getZ());
+                        byte[] raw = Snbt.write(entry.raw()).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        out.writeInt(raw.length); out.write(raw);
+                    }
+                }
+        });
     }
 }

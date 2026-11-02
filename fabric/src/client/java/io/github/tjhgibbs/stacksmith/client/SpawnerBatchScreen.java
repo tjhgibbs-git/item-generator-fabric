@@ -7,19 +7,25 @@ import io.github.tjhgibbs.stacksmith.core.entity.SpawnerSpec;
 import io.github.tjhgibbs.stacksmith.core.preset.SpawnerLog;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.core.BlockPos;
+import net.minecraft.client.Minecraft;
 
 import java.util.ArrayList;
 import java.util.List;
 
-/** A focused find → review → apply flow for the copies of a linked spawner. */
+/** World inventory, with an explicit source snapshot only when entered through Find copies. */
 public final class SpawnerBatchScreen extends StacksmithScreen {
     private enum Stage { FIND, OPTIONS, REVIEW, SENT }
     private Stage stage = Stage.FIND;
-    private final SpawnerSpec reference = Session.spawnerSaved == null ? null : Session.spawnerSaved.copy();
-    private final SpawnerSpec edited = Session.spawner.copy();
+    private final SpawnerSpec reference;
+    private final SpawnerSpec edited;
+    private final String sourceDimension;
+    private final BlockPos sourcePos;
+    private static Object browseWorld;
+    private static String browseQuery = "";
+    private static int browsePage;
     private EditBox radius, search;
     private boolean wholeWorld = true, scanned, expanded, allSpawners;
     private boolean started;
@@ -27,7 +33,8 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
     private int page;
     private String query = "";
     private List<SpawnerIndex.Entry> visibleEntries() {
-        var source = allSpawners || reference == null ? new ArrayList<>(SpawnerIndex.entries.values()) : SpawnerIndex.matches(reference);
+        if (!SpawnerIndex.current()) return List.of();
+        var source = allSpawners || reference == null ? new ArrayList<>(SpawnerIndex.entries.values()) : worldMatches();
         return source.stream().filter(e -> (e.dimension() + " " + e.pos().getX() + " " + e.pos().getY() + " " + e.pos().getZ() + " " + SpawnerLog.title(e.spec())).toLowerCase(java.util.Locale.ROOT).contains(query.toLowerCase(java.util.Locale.ROOT))).toList();
     }
     private Chip primary, options, stopRemaining;
@@ -36,17 +43,44 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
     private int submitted;
     private boolean wasSearching;
 
+    /** The World tab always browses the world independently of the design being edited. */
     public SpawnerBatchScreen(Screen parent) {
-        super(Component.literal("Spawners in world"), parent);
-        allSpawners = reference == null;
-        expanded = reference == null;
+        this(parent, false);
+    }
+
+    /** Find copies explicitly supplies a source; designing a spawner alone never filters World. */
+    public SpawnerBatchScreen(Screen parent, boolean findCopies) {
+        super(Component.literal("World spawners"), parent);
+        reference = findCopies ? (Session.spawnerSaved == null ? Session.spawner.copy() : Session.spawnerSaved.copy()) : null;
+        edited = findCopies ? Session.spawner.copy() : null;
+        sourceDimension = findCopies ? Session.spawnerDimension : null;
+        sourcePos = findCopies ? Session.spawnerPos : null;
+        allSpawners = !findCopies;
+        expanded = !findCopies;
+        if (!findCopies) {
+            Object current = Minecraft.getInstance().getSingleplayerServer();
+            if (browseWorld != current) { browseWorld = current; browseQuery = ""; browsePage = 0; }
+            query = browseQuery;
+            page = browsePage;
+        }
+    }
+
+    boolean filtersCopies() { return reference != null; }
+
+    private List<SpawnerIndex.Entry> worldMatches() {
+        return SpawnerIndex.matches(reference, sourceDimension, sourcePos);
+    }
+
+    @Override public void removed() {
+        if (reference == null) { browseQuery = query; browsePage = page; }
+        super.removed();
     }
 
     private int left() { return (width - panelWidth()) / 2; }
     private int panelWidth() { return Math.min(440, width - 28); }
     private boolean busy() { return SpawnerBatch.searching() || SpawnerBatch.writing() || SpawnerIndex.busy || SpawnerWorldBatch.busy(); }
     private boolean allowed() { return reference != null && Delivery.canUse("data") && Delivery.canUse("setblock"); }
-    private int count() { return wholeWorld ? SpawnerIndex.matches(reference).size() : SpawnerBatch.matches(reference).size(); }
+    private int count() { return wholeWorld ? worldMatches().size() : SpawnerBatch.matches(reference).size(); }
     private Chip chip(String text, int x, int y, int w, Runnable action) {
         return addRenderableWidget(Chip.of(text, w, 18, action).at(x, y));
     }
@@ -54,15 +88,16 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
 
     @Override
     protected void init() {
+        header(Tab.WORLD, null, null, null, null, null);
         int x = left(), w = panelWidth(), bottom = height - 32;
-        chip(stage == Stage.FIND || stage == Stage.SENT ? "Back to editor" : "Back", x, bottom, 100,
+        chip(stage == Stage.FIND || stage == Stage.SENT ? reference == null ? "Done" : "Back to editor" : "Back", x, bottom, 100,
                 () -> { if (stage == Stage.FIND || stage == Stage.SENT) onClose(); else show(Stage.FIND); });
         if (stage == Stage.FIND) {
-            chip("Whole world", x, 58, 110, () -> { wholeWorld = true; scanned = false; rebuildWidgets(); })
+            chip("Whole world", x, 58, 110, () -> { wholeWorld = true; useSavedIndex(); rebuildWidgets(); })
                     .selected(() -> wholeWorld).active = !busy() && SpawnerIndex.available();
-            chip("Nearby…", x + 114, 58, 80, () -> { wholeWorld = false; scanned = false; rebuildWidgets(); })
+            if (reference != null) chip("Nearby…", x + 114, 58, 72, () -> { wholeWorld = false; scanned = SpawnerBatch.searched(); rebuildWidgets(); })
                     .selected(() -> !wholeWorld).active = !busy();
-            chip(busy() ? "Cancel" : "Rescan", x + w - 80, 58, 80, () -> {
+            chip(SpawnerIndex.busy || SpawnerBatch.searching() ? "Cancel" : "Update index", x + w - 100, 58, 100, () -> {
                 if (SpawnerIndex.busy) SpawnerIndex.cancel(); else if (SpawnerBatch.searching()) SpawnerBatch.cancel(); else startSearch();
                 rebuildWidgets();
             }).active = !SpawnerWorldBatch.busy();
@@ -72,9 +107,11 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
             search.setResponder(t -> { query = t; page = 0; rebuildWidgets(); if (search != null) { setFocused(search); search.setCursorPosition(t.length()); } });
             if (reference != null) chip(allSpawners ? "All spawners" : "Matching copies", x + w - 116, 82, 116, () -> { allSpawners = !allSpawners; page = 0; rebuildWidgets(); });
             int total = wholeWorld ? visibleEntries().size() : count();
-            chip((expanded ? "v " : "> ") + (allSpawners ? "Spawners" : "Copies") + " (" + total + ")", x, 106, w - 110, () -> { expanded = !expanded; rebuildWidgets(); });
-            options = chip("Options…", x + w - 104, 106, 104, () -> show(Stage.OPTIONS));
-            options.active = !busy();
+            chip((expanded ? "v " : "> ") + (allSpawners ? "Spawners" : "Copies") + " (" + total + ")", x, 106, w - (reference == null ? 0 : 110), () -> { expanded = !expanded; rebuildWidgets(); });
+            if (reference != null) {
+                options = chip("Options…", x + w - 104, 106, 104, () -> show(Stage.OPTIONS));
+                options.active = !busy();
+            }
             if (expanded && wholeWorld) {
                 var results = visibleEntries();
                 int perPage = Math.max(1, (height - 195) / 22);
@@ -92,9 +129,11 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
                     chip("›", x + 28, bottom - 24, 24, () -> { page++; rebuildWidgets(); }).active = (page + 1) * perPage < results.size();
                 }
             }
-            primary = chip("Review " + copies(count()) + " →", x + w - 140, bottom, 140, () -> show(Stage.REVIEW));
-            primary.active = allowed() && scanned && !busy() && count() > 0;
-            if (!started) { started = true; startSearch(); }
+            if (reference != null) {
+                primary = chip("Review " + copies(count()) + " →", x + w - 140, bottom, 140, () -> show(Stage.REVIEW));
+                primary.active = allowed() && scanned && !busy() && count() > 0;
+            }
+            if (!started) { started = true; useSavedIndex(); }
         } else if (stage == Stage.OPTIONS) {
             chip("Exact copies", x, 77, w / 2 - 3, () -> { SpawnerBatch.match = SpawnerBatch.Match.IDENTICAL; rebuildWidgets(); })
                     .selected(() -> SpawnerBatch.match == SpawnerBatch.Match.IDENTICAL)
@@ -115,11 +154,11 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
             }
             chip("Use these options", x + w - 130, bottom, 130, () -> show(Stage.FIND));
         } else if (stage == Stage.REVIEW) {
-            chip("Locations ▾", x + w - 110, 56, 110, () -> { expanded = true; show(Stage.FIND); });
+            chip("Locations v", x + w - 110, 56, 110, () -> { expanded = true; show(Stage.FIND); });
             primary = chip("Apply to " + copies(count()), x + w - 140, bottom, 140, this::apply);
         } else {
             if (wholeWorld && SpawnerWorldBatch.busy()) stopRemaining = chip("Stop remaining", x, 135, 120, SpawnerWorldBatch::cancel);
-            primary = chip("Discover again", x + w - 140, bottom, 140, () -> { show(Stage.FIND); startSearch(); });
+            primary = chip("Back to results", x + w - 140, bottom, 140, () -> { show(Stage.FIND); useSavedIndex(); });
         }
     }
 
@@ -146,10 +185,23 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
                 java.util.concurrent.CompletableFuture.delayedExecutor(100, java.util.concurrent.TimeUnit.MILLISECONDS));
     }
 
+    private void useSavedIndex() {
+        if (!wholeWorld) { scanned = SpawnerBatch.searched(); return; }
+        if (!SpawnerIndex.available()) {
+            error = "World browsing requires singleplayer.";
+            return;
+        }
+        scanned = SpawnerIndex.current() && SpawnerIndex.indexed;
+        SpawnerIndex.ensure(() -> {
+            scanned = SpawnerIndex.current() && SpawnerIndex.indexed;
+            if (minecraft.gui.screen() == this) rebuildWidgets();
+        });
+    }
+
     private void startSearch() {
         if (busy()) return;
         scanned = false;
-        Runnable done = () -> { scanned = true; if (minecraft.gui.screen() == this) rebuildWidgets(); };
+        Runnable done = () -> { scanned = wholeWorld ? SpawnerIndex.current() && SpawnerIndex.indexed : SpawnerBatch.searched(); if (minecraft.gui.screen() == this) rebuildWidgets(); };
         if (wholeWorld) {
             if (!SpawnerIndex.available()) { error = "Whole-world discovery requires singleplayer. Choose Nearby on servers."; return; }
             SpawnerIndex.start(done);
@@ -158,7 +210,6 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
 
     @Override public void onClose() {
         dismissed = true;
-        if (SpawnerIndex.busy) SpawnerIndex.cancel();
         if (SpawnerBatch.searching()) SpawnerBatch.cancel();
         super.onClose();
     }
@@ -168,15 +219,15 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
         if (stopRemaining != null) stopRemaining.active = SpawnerWorldBatch.busy();
         if (stage == Stage.SENT && primary != null) primary.active = !busy();
         boolean searching = SpawnerIndex.busy || SpawnerBatch.searching();
-        if (wasSearching && !searching && stage == Stage.FIND) rebuildWidgets();
+        if (wasSearching && !searching && stage == Stage.FIND) { scanned = wholeWorld ? SpawnerIndex.current() && SpawnerIndex.indexed : SpawnerBatch.searched(); rebuildWidgets(); }
         wasSearching = searching;
         if (primary != null && stage == Stage.FIND) primary.active = allowed() && scanned && !busy() && count() > 0;
     }
 
     private void apply() {
-        if (busy() || count() == 0) return;
+        if (reference == null || busy() || count() == 0) return;
         submitted = count();
-        String why = wholeWorld ? SpawnerWorldBatch.start(SpawnerIndex.matches(reference), edited,
+        String why = wholeWorld ? SpawnerWorldBatch.start(worldMatches(), edited,
                 SpawnerBatch.match == SpawnerBatch.Match.IDENTICAL || SpawnerBatch.overwriteSettings)
                 : SpawnerBatch.apply(reference, edited, new Commands.Style(Session.briefCommands, Session.target));
         if (why != null) { error = why; return; }
@@ -197,20 +248,23 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
     @Override
     protected void extractPanels(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
         int x = left(), w = panelWidth();
-        panel(g, x - 9, 10, w + 18, height - 20);
-        line(g, stage == Stage.REVIEW ? "Review changes" : stage == Stage.SENT ? "Update results" : "Discover & rebalance", 20, Theme.ACCENT);
-        line(g, "Spawners in world", 37, Theme.TEXT);
+        panel(g, x - 9, 26, w + 18, height - 36);
+        line(g, stage == Stage.REVIEW ? "Review changes" : stage == Stage.SENT ? "Update results"
+                : reference == null ? "World spawners" : "Find copies · " + SpawnerLog.title(reference), 34, Theme.ACCENT);
         if (stage == Stage.FIND) {
             if (!expanded) {
                 String status = wholeWorld ? SpawnerIndex.status : SpawnerBatch.status();
                 wrap(g, status.isBlank() ? "Discover spawners, then expand Copies to inspect or teleport." : status, 137, Theme.TEXT_DIM);
-                wrap(g, wholeWorld ? reference == null ? "All saved dimensions. Open a location to edit fresh data." : "Source: " + SpawnerLog.title(reference) + " · source block excluded"
+                wrap(g, wholeWorld ? reference == null ? "Saved results across all dimensions. Update index checks changed regions." : "Source: " + SpawnerLog.title(reference) + (sourcePos == null ? " · design template" : " · source block excluded")
                         : "Loaded chunks only · " + SpawnerBatch.radius + " blocks around source.", 169, Theme.TEXT_DIM);
             } else if (wholeWorld && !visibleEntries().isEmpty()) {
-                String coverage = SpawnerIndex.busy ? SpawnerIndex.status : "Snapshot · " + (SpawnerIndex.skipped == 0 ? "0 unread chunks" : SpawnerIndex.skipped + " unread chunks (partial)");
-                g.text(font, font.plainSubstrByWidth(coverage, w - 62), x + 62, height - 49, SpawnerIndex.skipped > 0 ? Theme.WARN : Theme.TEXT_DIM, false);
+                String coverage = SpawnerIndex.status;
+                int offset = visibleEntries().size() > Math.max(1, (height - 195) / 22) ? 62 : 0;
+                g.text(font, font.plainSubstrByWidth(coverage, w - offset), x + offset, height - 49, SpawnerIndex.skipped > 0 ? Theme.WARN : Theme.TEXT_DIM, false);
+                if (mouseX >= x + offset && mouseX < x + w && mouseY >= height - 51 && mouseY < height - 38)
+                    g.setTooltipForNextFrame(font, Component.literal(coverage + (SpawnerIndex.savedAt > 0 ? "\nSaved regions checked: " + java.time.Instant.ofEpochMilli(SpawnerIndex.savedAt).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("dd MMM HH:mm")) : "")), mouseX, mouseY);
             } else if (wholeWorld && visibleEntries().isEmpty()) {
-                wrap(g, SpawnerIndex.busy ? SpawnerIndex.status : "No matching spawners. Try All spawners or another search.", 136, Theme.TEXT_DIM);
+                wrap(g, SpawnerIndex.busy ? SpawnerIndex.status : reference == null ? "No spawners match. Try another search or Update index." : "No matching copies. Try All spawners or Update index.", 136, Theme.TEXT_DIM);
             }
         } else if (stage == Stage.OPTIONS) {
             line(g, "Which saved spawners should match?", 60, Theme.TEXT_DIM);

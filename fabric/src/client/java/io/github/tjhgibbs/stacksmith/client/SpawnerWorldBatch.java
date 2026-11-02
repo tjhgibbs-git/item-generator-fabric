@@ -152,7 +152,10 @@ public final class SpawnerWorldBatch {
                 be.setChanged();
                 level.sendBlockUpdated(target.pos(), be.getBlockState(), be.getBlockState(), 3);
                 Nbt.Compound after = McNbt.fromGame(be.saveWithoutMetadata(level.registryAccess()));
-                if (fingerprint(after).equals(fingerprint(out)) && java.util.Objects.equals(after.get("Delay"), fresh.get("Delay"))) completed++;
+                if (fingerprint(after).equals(fingerprint(out)) && java.util.Objects.equals(after.get("Delay"), fresh.get("Delay"))) {
+                    completed++;
+                    SpawnerIndex.recordUpdated(target, after);
+                }
                 else failed++;
             } catch (Exception ex) { failed++; }
         }
