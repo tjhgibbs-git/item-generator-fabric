@@ -80,7 +80,8 @@ public final class WorldSpawner {
      * none). Staying on the same block keeps what it was loaded as (Reset still restores that).
      */
     public static void link(SpawnerSpec spawner, BlockPos pos) {
-        if (pos == null || !pos.equals(Session.spawnerPos)) {
+        if (pos == null || !pos.equals(Session.spawnerPos)
+                || Minecraft.getInstance().level != null && !Minecraft.getInstance().level.dimension().identifier().toString().equals(Session.spawnerDimension)) {
             Session.spawnerOriginal = null;
             Session.spawnerSaved = null;
             SpawnerBatch.forget();
@@ -88,5 +89,7 @@ public final class WorldSpawner {
         Session.spawner = spawner;
         Session.spawnerEntry = 0;
         Session.spawnerPos = pos == null ? null : pos.immutable();
+        Session.spawnerDimension = pos == null || Minecraft.getInstance().level == null ? null
+                : Minecraft.getInstance().level.dimension().identifier().toString();
     }
 }

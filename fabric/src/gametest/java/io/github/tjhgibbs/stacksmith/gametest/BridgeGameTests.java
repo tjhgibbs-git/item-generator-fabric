@@ -35,6 +35,141 @@ import java.util.List;
 public class BridgeGameTests {
     private static final String EMPTY_64 = "stacksmith-gametest:empty64";
 
+    /** Exercise the candidate direct server-side write on a real spawner block entity. */
+    @GameTest(structure = EMPTY_64, maxTicks = 40)
+    public void directSpawnerUpdatePreservesPoolAndCountdown(GameTestHelper h) {
+        BlockPos pos = h.absolutePos(new BlockPos(5, 2, 5));
+        var level = h.getLevel();
+        var server = level.getServer();
+        String at = pos.getX() + " " + pos.getY() + " " + pos.getZ();
+        server.getCommands().performPrefixedCommand(server.createCommandSourceStack().withSuppressedOutput(),
+                "setblock " + at + " spawner{Delay:123s,SpawnCount:2s,SpawnData:{entity:{id:\"minecraft:zombie\",Tags:[\"arena\"]}},SpawnPotentials:[{weight:1,data:{entity:{id:\"minecraft:zombie\",Tags:[\"arena\"]}}},{weight:3,data:{entity:{id:\"minecraft:skeleton\"}}}]}");
+        var be = level.getBlockEntity(pos);
+        if (!(be instanceof net.minecraft.world.level.block.entity.SpawnerBlockEntity)) {
+            h.fail("No spawner was placed"); return;
+        }
+        var before = be.saveWithoutMetadata(level.registryAccess());
+        var edited = before.copy();
+        edited.putShort("SpawnCount", (short) 7);
+        be.loadWithComponents(net.minecraft.world.level.storage.TagValueInput.create(
+                net.minecraft.util.ProblemReporter.DISCARDING, level.registryAccess(), edited));
+        be.setChanged();
+        level.sendBlockUpdated(pos, be.getBlockState(), be.getBlockState(), 3);
+        var after = be.saveWithoutMetadata(level.registryAccess());
+        var expected = before.copy();
+        expected.putShort("SpawnCount", (short) 7);
+        if (!expected.equals(after)) {
+            h.fail("Direct update changed other data: expected " + expected + " but got " + after); return;
+        }
+        h.succeed();
+    }
+
+    /** A no-create lookup must not by itself load a distant, unticketed chunk. */
+    @GameTest(structure = EMPTY_64, maxTicks = 40)
+    public void noCreateLookupDoesNotLoadDistantChunk(GameTestHelper h) {
+        var cache = h.getLevel().getChunkSource();
+        BlockPos here = h.absolutePos(new BlockPos(0, 0, 0));
+        int x = (here.getX() >> 4) + 1024, z = (here.getZ() >> 4) + 1024;
+        if (cache.getChunk(x, z, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, false) != null
+                || cache.getChunkNow(x, z) != null) {
+            h.fail("Unticketed distant chunk unexpectedly loaded"); return;
+        }
+        h.succeed();
+    }
+
+    /** A loading ticket for a missing chunk demonstrates why the executor needs a generation guard. */
+    @GameTest(structure = EMPTY_64, maxTicks = 100000)
+    public void loadingTicketCanCreatePreviouslyMissingTerrain(GameTestHelper h) {
+        var cache = h.getLevel().getChunkSource();
+        int base = 100_000 + (int) (System.nanoTime() % 100_000);
+        var pos = new net.minecraft.world.level.ChunkPos(base, base);
+        if (cache.chunkMap.read(pos).join().isPresent()) {
+            h.fail("Test chunk already existed"); return;
+        }
+        var ticket = new net.minecraft.server.level.TicketType(
+                net.minecraft.server.level.TicketType.NO_TIMEOUT,
+                net.minecraft.server.level.TicketType.FLAG_LOADING);
+        var future = cache.addTicketAndLoadWithRadius(ticket, pos, 0);
+        h.runBeforeTestEnd(() -> cache.removeTicketWithRadius(ticket, pos, 0));
+        h.succeedWhen(() -> {
+            if (!future.isDone()) throw h.assertionException("Waiting for chunk");
+            future.join();
+            if (cache.getChunkNow(pos.x(), pos.z()) == null)
+                throw h.assertionException("Ticket completed without a full chunk");
+        });
+    }
+
+    /** Rebalance hand-placed copies in a previously visited area after its chunk unloads. */
+    @GameTest(structure = EMPTY_64, maxTicks = 100000)
+    public void distantSpawnerSurvivesUnloadAndDirectUpdate(GameTestHelper h) {
+        var level = h.getLevel();
+        var cache = level.getChunkSource();
+        int base = 200_000 + (int) (System.nanoTime() % 100_000);
+        var chunk = new net.minecraft.world.level.ChunkPos(base, base);
+        var pos = new BlockPos(chunk.x() * 16 + 8, 100, chunk.z() * 16 + 8);
+        var second = pos.offset(2, 0, 0);
+        var ticket = new net.minecraft.server.level.TicketType(
+                net.minecraft.server.level.TicketType.NO_TIMEOUT,
+                net.minecraft.server.level.TicketType.FLAG_LOADING);
+        var future = new java.util.concurrent.CompletableFuture<?>[]{cache.addTicketAndLoadWithRadius(ticket, chunk, 0)};
+        int[] phase = {0};
+        boolean[] held = {true};
+        h.runBeforeTestEnd(() -> { if (held[0]) cache.removeTicketWithRadius(ticket, chunk, 0); });
+        h.succeedWhen(() -> {
+            if (phase[0] == 0) {
+                if (!future[0].isDone()) throw h.assertionException("Waiting for initial load");
+                future[0].join();
+                for (int i = 0; i < 2; i++) {
+                    var target = i == 0 ? pos : second;
+                    level.setBlock(target, net.minecraft.world.level.block.Blocks.SPAWNER.defaultBlockState(), 3);
+                    var be = level.getBlockEntity(target);
+                    if (be == null) throw h.assertionException("No distant spawner");
+                    var tag = be.saveWithoutMetadata(level.registryAccess());
+                    tag.putShort("SpawnCount", (short) 9);
+                    tag.putShort("Delay", (short) (123 + i));
+                    be.loadWithComponents(net.minecraft.world.level.storage.TagValueInput.create(
+                            net.minecraft.util.ProblemReporter.DISCARDING, level.registryAccess(), tag));
+                    be.setChanged();
+                }
+                cache.removeTicketWithRadius(ticket, chunk, 0);
+                held[0] = false;
+                phase[0] = 1;
+            }
+            if (phase[0] == 1) {
+                if (cache.getChunkNow(chunk.x(), chunk.z()) != null)
+                    throw h.assertionException("Waiting for unload");
+                future[0] = cache.addTicketAndLoadWithRadius(ticket, chunk, 0);
+                held[0] = true;
+                phase[0] = 2;
+            }
+            if (!future[0].isDone()) throw h.assertionException("Waiting for reload");
+            future[0].join();
+            SpawnerSpec reference = null;
+            for (int i = 0; i < 2; i++) {
+                var target = i == 0 ? pos : second;
+                var be = level.getBlockEntity(target);
+                if (!(be instanceof net.minecraft.world.level.block.entity.SpawnerBlockEntity))
+                    throw h.assertionException("Distant spawner did not survive unload and reload");
+                var tag = be.saveWithoutMetadata(level.registryAccess());
+                if (tag.getShortOr("SpawnCount", (short) 0) != 9
+                        || tag.getShortOr("Delay", (short) 0) != 123 + i)
+                    throw h.assertionException("Distant copy lost its settings");
+                SpawnerSpec actual = SpawnerSpec.fromTag(McNbt.fromGame(tag));
+                if (reference == null) reference = actual;
+                else if (!reference.sameAs(actual))
+                    throw h.assertionException("Identical copies with different countdowns did not match");
+                tag.putShort("SpawnCount", (short) 4);
+                be.loadWithComponents(net.minecraft.world.level.storage.TagValueInput.create(
+                        net.minecraft.util.ProblemReporter.DISCARDING, level.registryAccess(), tag));
+                be.setChanged();
+                var after = be.saveWithoutMetadata(level.registryAccess());
+                if (after.getShortOr("SpawnCount", (short) 0) != 4
+                        || after.getShortOr("Delay", (short) 0) != 123 + i)
+                    throw h.assertionException("Bulk update did not preserve countdown");
+            }
+        });
+    }
+
     @GameTest(structure = EMPTY_64, maxTicks = 20)
     public void chestSlotsAndNestedShulkersSurviveCommandsAndItemCodecs(GameTestHelper h) {
         var reg = h.getLevel().registryAccess();

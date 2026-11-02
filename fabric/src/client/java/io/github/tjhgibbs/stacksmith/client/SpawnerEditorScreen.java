@@ -183,7 +183,8 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                 .tip(I18n.get(looked != null ? "stacksmith.tooltip.load_looked_at" : "stacksmith.tooltip.load_looked_at_none")));
         load.active = looked != null && !looked.equals(Session.spawnerPos);
         loadChipX = load.getX();
-        if (Session.spawnerPos != null && !WorldSpawner.exists(Session.spawnerPos)) {
+        if (Session.spawnerPos != null && (!WorldSpawner.exists(Session.spawnerPos)
+                || !minecraft.level.dimension().identifier().toString().equals(Session.spawnerDimension))) {
             Session.spawnerPos = null; // broken or out of reach: placing makes a new one
         }
         buildLeft();
@@ -375,9 +376,12 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
 
     private void buildFooter() {
         int y = height - FOOTER + 3;
-        commandBox = addRenderableWidget(new EditBox(font, PAD, y + 2, width - PAD * 2 - 64 - 50, 16, Component.literal("Command")));
+        commandBox = addRenderableWidget(new EditBox(font, PAD, y + 2, width - PAD * 2 - 64 - 110, 16, Component.literal("Command")));
         commandBox.setMaxLength(Commands.COMMAND_BLOCK_LIMIT);
         commandBox.setEditable(false);
+        addRenderableWidget(Chip.of("Find in world…", 100, 20,
+                () -> minecraft.setScreenAndShow(new SpawnerBatchScreen(this)))
+                .at(width - PAD - 164, y).tip("Discover spawners across the world, inspect copies and rebalance them"));
         addRenderableWidget(Button.builder(Component.translatable("gui.done"), b -> onClose()).bounds(width - PAD - 60, y, 60, 20).build());
     }
 
@@ -742,148 +746,24 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         }
     }
 
-    /**
-     * Applies this spawner to the copies of it nearby: finds spawners within a radius that match
-     * what the linked block holds (as loaded, or as last saved: never the unsaved edits), then
-     * overwrites them. So editing a pig spawner into a zombie one still finds the other pig
-     * spawners, until the zombie is saved.
-     */
+    /** A compact invitation keeps the editor focused; bulk work has its own review flow. */
     private final class BatchCard extends Card {
-        private final SpawnerSpec reference = Session.spawnerSaved;
-        private final boolean allowed = Delivery.canUse("data") && Delivery.canUse("setblock");
-        private final EditBox radius;
-        private final Chip find, identical, sameMobs, settings, apply;
-        private final List<BlockPos> matches = SpawnerBatch.matches(reference);
-        /** Overwrite settings too only applies to Same mob. (Not the chip's visible flag: the pane resets that when scrolling.) */
-        private final boolean showSettings = SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS;
+        private final Chip open;
 
         BatchCard() {
-            super("Apply to nearby copies", 0xFFB48CFF, "Placed several copies of this spawner? Find the ones nearby that match it "
-                    + "as it is in the world (your unsaved edits aren't looked for), and give them all your changes. "
-                    + "This spawner itself is written by Overwrite.");
-            radius = body(new EditBox(font, 0, 0, 30, 14, Component.literal("Radius")));
-            radius.setValue(Integer.toString(SpawnerBatch.radius));
-            radius.setTooltip(Tooltip.create(Component.literal("How far from this spawner to look, up to " + SpawnerBatch.MAX_RADIUS
-                    + " blocks. Only spawners in chunks your game has loaded are found.")));
-            radius.setResponder(t -> {
-                try {
-                    int v = Integer.parseInt(t.strip());
-                    boolean ok = v >= 1 && v <= SpawnerBatch.MAX_RADIUS;
-                    radius.setTextColor(ok ? Theme.TEXT : Theme.BAD);
-                    if (ok && v != SpawnerBatch.radius) {
-                        SpawnerBatch.radius = v;
-                        SpawnerBatch.forget(); // found with the old radius
-                    }
-                } catch (NumberFormatException e) {
-                    radius.setTextColor(Theme.BAD);
-                }
-            });
-            find = body(Chip.of("Find", 40, 14, () -> SpawnerBatch.search(() -> {
-                if (minecraft.gui.screen() == SpawnerEditorScreen.this) {
-                    rebuild();
-                }
-            })).tip("Read the spawners within the radius and count the matching ones"));
-            identical = body(Chip.of("Identical", 60, 14, () -> setMatch(SpawnerBatch.Match.IDENTICAL))
-                    .selected(() -> SpawnerBatch.match == SpawnerBatch.Match.IDENTICAL)
-                    .tip("Only spawners exactly like this one as saved (mobs and every setting), which get everything"));
-            sameMobs = body(Chip.of("Same mob", 60, 14, () -> setMatch(SpawnerBatch.Match.SAME_MOBS))
-                    .selected(() -> SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS)
-                    .tip("Spawners with the same mob(s) as this one as saved, whatever their timing and ranges"));
-            settings = body(Chip.of((SpawnerBatch.overwriteSettings ? "☑" : "☐") + " Overwrite settings too", 100, 14, () -> {
-                SpawnerBatch.overwriteSettings = !SpawnerBatch.overwriteSettings;
-                rebuild();
-            }).left().tip("Off: they get the new mob(s) and keep their own delays, counts and ranges (say, a trigger distance you "
-                    + "tuned). On: they get this spawner's settings too."));
-            int n = matches.size();
-            apply = body(Chip.of(n == 0 ? "Apply to matches" : "Apply to " + n + (n == 1 ? " spawner" : " spawners"), 100, 16, () -> {
-                String why = SpawnerBatch.apply(reference, spawner, style());
-                if (why == null) {
-                    SpawnerLibrary.record(spawner, "Applied to " + n + (n == 1 ? " copy" : " copies"), null);
-                }
-                toast(Component.literal(why == null ? "Overwriting " + n + (n == 1 ? " spawner" : " spawners") : why), why == null);
-                rebuild();
-            }).color(Theme.GOOD).tip("Overwrite the matching spawners with this one"
-                    + (SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS && !SpawnerBatch.overwriteSettings ? "'s mobs (keeping their settings)" : "")));
-            radius.setEditable(ready());
-            identical.active = sameMobs.active = settings.active = ready();
-            updateButtons();
-            if (SpawnerBatch.searched()) {
-                SpawnerBatch.highlight(matches);
-            }
-        }
-
-        private boolean ready() {
-            return reference != null && allowed;
-        }
-
-        /** Searching and writing run on after the card is built, so these follow along. */
-        private void updateButtons() {
-            boolean busy = SpawnerBatch.searching() || SpawnerBatch.writing();
-            find.active = ready() && !busy;
-            apply.active = ready() && !busy && SpawnerBatch.searched() && !matches.isEmpty() && spawner.problems().isEmpty();
-        }
-
-        private void setMatch(SpawnerBatch.Match m) {
-            SpawnerBatch.match = m;
-            rebuild();
+            super("Find in world", 0xFFB48CFF,
+                    "Find nearby copies of the loaded spawner, then review your changes before sending them.");
+            open = body(Chip.of("Find copies in world…", 120, 18,
+                    () -> minecraft.setScreenAndShow(new SpawnerBatchScreen(SpawnerEditorScreen.this)))
+                    .tip("Find matching spawners in loaded chunks. Your unsaved edits become the replacement."));
         }
 
         @Override
         protected int layoutBody(int x, int y, int w) {
-            radius.setX(x + font.width("Within") + 4);
-            radius.setY(y);
-            find.setX(x + w - find.getWidth());
-            find.setY(y);
-            int cw = (w - font.width("Match") - 6) / 2;
-            identical.setX(x + font.width("Match") + 4);
-            identical.setY(y + 17);
-            identical.setWidth(cw);
-            sameMobs.setWidth(cw);
-            sameMobs.setX(identical.getX() + cw + 2);
-            sameMobs.setY(y + 17);
-            int ry = y + 34;
-            settings.setX(x);
-            settings.setWidth(w);
-            if (showSettings) {
-                settings.setY(ry);
-                ry += 17;
-            } else {
-                settings.setY(-10_000); // off every pane, so it stays hidden
-            }
-            ry += 12; // status line
-            apply.setX(x);
-            apply.setY(ry);
-            apply.setWidth(w);
-            return ry + 16 - y;
-        }
-
-        @Override
-        protected void extractBody(GuiGraphicsExtractor g, int x, int y, int w, int mouseX, int mouseY) {
-            updateButtons();
-            g.text(font, "Within", x, y + 3, Theme.TEXT, false);
-            g.text(font, "blocks", radius.getX() + radius.getWidth() + 4, y + 3, Theme.TEXT_DIM, false);
-            g.text(font, "Match", x, y + 20, Theme.TEXT, false);
-            String line;
-            int color = Theme.TEXT_DIM;
-            if (reference == null) {
-                line = "Load a spawner (look at it, press J) or place this one first.";
-                color = Theme.WARN;
-            } else if (!allowed) {
-                line = "Needs operator (to read and set spawners).";
-                color = Theme.WARN;
-            } else if (!SpawnerBatch.status().isEmpty()) {
-                line = SpawnerBatch.status();
-            } else if (SpawnerBatch.searched()) {
-                line = matches.size() + " of " + SpawnerBatch.foundCount() + " nearby match " + SpawnerLog.title(reference);
-                color = matches.isEmpty() ? Theme.TEXT_DIM : Theme.GOOD;
-            } else {
-                line = "Finds " + SpawnerLog.title(reference) + (unsaved() ? ", as saved" : "");
-            }
-            g.text(font, font.plainSubstrByWidth(line, w), x, apply.getY() - 11, color, false);
-            if (mouseX >= x && mouseX < x + w && mouseY >= apply.getY() - 12 && mouseY < apply.getY() - 1 && reference != null && unsaved()) {
-                g.setTooltipForNextFrame(font, Component.literal("Looks for copies of the spawner as it is in the world. "
-                        + "Overwrite first to look for what you're editing instead."), mouseX, mouseY);
-            }
+            open.setX(x);
+            open.setY(y);
+            open.setWidth(w);
+            return 18;
         }
     }
 
