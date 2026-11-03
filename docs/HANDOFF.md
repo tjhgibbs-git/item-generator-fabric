@@ -2,6 +2,13 @@
 
 ## Current work: spawner workspace (2026-11-02)
 
+**2026-11-03:** the World tab was rebuilt around the map-maker workflow: spawners grouped by kind
+with counts and setup differences, locations expanded per kind, teleport onto a spawner (J then
+edits it), Edit (travel + editor), and Edit all (diff-only bulk edit with review, per-target skip
+reasons, and visiting edge targets with a return trip). Checked in a block-scraper client at
+1920x1080 (GUI scale auto/4, 3 and 2) with 29 spawners across the Overworld and Nether, including
+writes verified with `/data get`. See SPAWNER_BULK_FLOW.md.
+
 The active branch is `design/spawner-workspace`. The initial world-wide browser and bulk executor are implemented. Read [SPAWNER_BULK_FLOW.md](SPAWNER_BULK_FLOW.md) for current behavior and limitations, and [SPAWNER_WORKSPACE_DESIGN.md](SPAWNER_WORKSPACE_DESIGN.md) for the broader design. This section supersedes conflicting older scope notes below.
 
 **Find in world…** defaults to discovery across all saved dimensions in singleplayer, after flushing a saved snapshot. Loaded server chunks overlay saved entries. The browser searches mob labels, dimensions and coordinates, switches between all spawners and matching copies, and expands a paginated locations list with Teleport buttons. Opening a row travels there and reads fresh data into the editor. Cross-dimension travel restores the browser. Nearby loaded-chunk discovery remains secondary.

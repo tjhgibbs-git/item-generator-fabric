@@ -32,6 +32,8 @@ public final class SpawnerIndex {
     }
 
     static final Map<String, Entry> entries = new LinkedHashMap<>();
+    /** Bumped whenever {@link #entries} changes, so open screens know to regroup. */
+    static int version;
     static boolean busy;
     static boolean indexed;
     static volatile String status = "Discover spawners across all saved dimensions.";
@@ -92,11 +94,29 @@ public final class SpawnerIndex {
             if (expected != world || !current()) return;
             Entry fresh = entry(previous.dimension(), previous.pos(), copied);
             entries.put(fresh.key(), fresh);
+            version++;
+        });
+    }
+
+    /** Drops a location found to hold no spawner any more. */
+    public static void recordMissing(Entry previous) {
+        Object expected = world;
+        Minecraft.getInstance().execute(() -> {
+            if (expected == world && current() && entries.remove(previous.key()) != null) version++;
         });
     }
 
     /** Returns an error, or null when the explicit teleport command was submitted. */
     public static String teleport(Entry entry) {
+        return teleport(entry, true, false);
+    }
+
+    /**
+     * Teleports to {@code entry}. {@code reopen}: bring the open screen back after changing
+     * dimension. {@code lookAtIt}: stand on top of the spawner looking straight down at it, so
+     * the crosshair is on it (J then edits it).
+     */
+    public static String teleport(Entry entry, boolean reopen, boolean lookAtIt) {
         Minecraft mc = Minecraft.getInstance();
         if (!current() || mc.player == null) return "World changed. Discover again.";
         if (!Delivery.canUse("execute") || !Delivery.canUse("tp")) return "Teleport requires operator permission.";
@@ -106,8 +126,9 @@ public final class SpawnerIndex {
         var returnTo = mc.gui.screen();
         Object connection = mc.getConnection();
         mc.getConnection().sendCommand("execute in " + entry.dimension() + " run tp @s "
-                + (p.getX() + .5) + " " + (p.getY() + 1.0) + " " + (p.getZ() + .5));
-        if (!mc.level.dimension().identifier().toString().equals(entry.dimension()))
+                + (p.getX() + .5) + " " + (p.getY() + 1.0) + " " + (p.getZ() + .5)
+                + (lookAtIt ? " facing " + (p.getX() + .5) + " " + (p.getY() + .5) + " " + (p.getZ() + .5) : ""));
+        if (reopen && !mc.level.dimension().identifier().toString().equals(entry.dimension()))
             restoreAfterTravel(entry, returnTo, connection, 0);
         return null;
     }
@@ -116,6 +137,7 @@ public final class SpawnerIndex {
         Minecraft mc = Minecraft.getInstance();
         if (screen == null || attempt >= 150 || mc.getConnection() != connection || !current()) return;
         if (screen instanceof SpawnerBatchScreen browser && browser.dismissed) return;
+        if (screen instanceof SpawnerWorldScreen browser && browser.dismissed) return;
         var shown = mc.gui.screen();
         if (shown != null && shown != screen && !(shown instanceof net.minecraft.client.gui.screens.LevelLoadingScreen)
                 && !(shown instanceof net.minecraft.client.gui.screens.GenericMessageScreen)) return;
@@ -147,6 +169,7 @@ public final class SpawnerIndex {
         if (!sameWorld) {
             generation++;
             entries.clear();
+            version++;
             regions = Map.of();
             fullChunks = Set.of();
             indexed = false;
@@ -173,7 +196,7 @@ public final class SpawnerIndex {
                     Scan cached = loadCache(root);
                     if (cached.cached()) mc.execute(() -> {
                         if (gen != generation || server != mc.getSingleplayerServer()) return;
-                        entries.clear(); entries.putAll(cached.entries());
+                        entries.clear(); entries.putAll(cached.entries()); version++;
                         regions = cached.regions(); fullChunks = Set.copyOf(cached.full());
                         savedAt = cached.savedAt(); skipped = cached.skipped(); indexed = true;
                         // Cached rows are immediately usable for browsing while file fingerprints
@@ -237,6 +260,7 @@ public final class SpawnerIndex {
                         if (server != mc.getSingleplayerServer()) { cancel(); status = "World changed. Discover again."; done.run(); return; }
                         entries.clear();
                         entries.putAll(merged);
+                        version++;
                         regions = scan.regions();
                         savedAt = scan.savedAt();
                         fullChunks = Set.copyOf(full);

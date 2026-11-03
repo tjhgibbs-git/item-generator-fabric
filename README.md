@@ -17,7 +17,7 @@ Client-side only. It generates items and commands; the server needs nothing inst
 
 ## Using it
 
-Press **J** (rebindable). Three tabs: **Spawner**, **Mob** and **Item**.
+Press **J** (rebindable). Tabs: **Spawner**, **Mob**, **Chests**, **Item** and **World**.
 
 **Look at a spawner and press J** to edit that spawner: the Spawner tab opens on it, and
 **Overwrite the spawner** writes your changes back to the same block. That is the main way
@@ -141,6 +141,38 @@ tags: [legendary, bound]
   **Enter** load, or **Load** on a row; hover a row for its mobs, light and settings. ★/☆ on a row
   stars or unstars it (an unstarred row stays until you leave, so a misclick is one click to
   undo). Loading keeps the tab tied to its block, so **Overwrite** then puts it there.
+
+### World tab: every spawner in the world
+
+For building a map with lots of spawners (singleplayer, or a world you host on LAN). Opening it
+lists every spawner in every dimension, grouped by **kind**: the same mobs with the same gear and
+data. Each kind shows its spawn egg, what sets it apart ("Zombie · Iron Sword, Iron Helmet",
+"Boom Bob · Creeper, powered", pool weights), how many there are, and **N setups** when copies
+have different timings or ranges. A starred spawner's nickname is used as the kind's title.
+Hover a kind for its full mobs and settings.
+
+- **Click a kind** to see where its copies are: coordinates, distance (or the dimension, if it's
+  another one), and, for copies that differ from the rest, how ("every 5–10 s, 2 per spawn").
+  The order stays put while you work through them; the last one you went to is marked, and the
+  others you've been to say **✓ visited**.
+- **Click a location** to teleport onto it, looking down at it: the list closes, and **J** edits
+  that spawner. The World tab brings the list back as you left it.
+- **Edit** (on a location) travels there and opens it in the Spawner tab; **Done** comes back.
+- **Edit all N** opens the editor on the kind's usual setup. Change what you want (settings, gear,
+  the mobs themselves, or load one from **Recent…**), then **Apply to all N…**: a review lists
+  exactly what will change, then it's written to every listed copy **without moving you**.
+  Only what you changed is applied: each copy keeps its own other settings. The live spawn
+  countdown (`Delay`) is ignored throughout: it never splits a kind, never shows as a difference,
+  and isn't offered or written when editing many at once. A
+  copy next to unexplored terrain can't be loaded from afar without generating terrain, so you're
+  taken to it for a moment and brought back to exactly where you were. Copies changed since the
+  scan, or that the change would break (waiting at least longer than at most), are skipped and
+  listed with a **TP** button.
+- **Search** matches mob names, nicknames, gear and data, dimensions and coordinates; a search
+  that only matches locations opens those kinds. **All dimensions** switches to one dimension.
+- The list is read from the saved world plus the loaded chunks (spawners near you are always
+  current). **Rescan** saves the world and re-reads the regions that changed; it never loads or
+  generates chunks. The result is cached per world.
 
 ### Mob tab
 

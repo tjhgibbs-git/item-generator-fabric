@@ -40,12 +40,14 @@ public abstract class StacksmithScreen extends Screen {
     static Tab lastTab = Tab.SPAWNER;
 
     static Screen open(Tab tab, Screen parent) {
+        // An editor opened from the World list returns there; other tabs don't stack on it.
+        if (tab != Tab.WORLD && parent instanceof SpawnerWorldScreen list) parent = list.parent;
         return switch (tab) {
             case CHEST -> new ChestEditorScreen(parent);
             case ITEM -> new ItemEditorScreen(parent);
             case MOB -> new MobEditorScreen(parent);
             case SPAWNER -> new SpawnerEditorScreen(parent);
-            case WORLD -> new SpawnerBatchScreen(parent);
+            case WORLD -> parent instanceof SpawnerWorldScreen list ? list : new SpawnerWorldScreen(parent);
         };
     }
 
