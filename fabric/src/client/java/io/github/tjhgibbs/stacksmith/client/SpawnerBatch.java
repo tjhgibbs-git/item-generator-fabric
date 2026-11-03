@@ -49,7 +49,10 @@ public final class SpawnerBatch {
     private static boolean searching;
     /** Bumped to drop the answers of a search that was replaced or abandoned. */
     private static int generation;
-    private static int written;
+    private static long readDeadline;
+    private static final long READ_TIMEOUT_MS = 10_000;
+    private static Object searchWorld;
+    private static String searchDimension;
     /** The next read of a search, run on the coming tick. */
     private static Runnable nextRead;
     private static String status = "";
@@ -64,7 +67,15 @@ public final class SpawnerBatch {
         nextRead = null;
         found = null;
         searching = false;
+        readDeadline = 0;
+        highlighted = List.of();
         status = "";
+    }
+
+    /** Stops discovery; discarded replies cannot become usable results. */
+    public static void cancel() {
+        forget();
+        status = "Search cancelled. No spawners changed.";
     }
 
     public static boolean searching() {
@@ -101,6 +112,9 @@ public final class SpawnerBatch {
         if (mc.level == null || c == null) {
             return;
         }
+        searchWorld = mc.getConnection();
+        searchDimension = mc.level.dimension().identifier().toString();
+        status = "";
         List<BlockPos> spots = new ArrayList<>();
         long r2 = (long) radius * radius;
         for (int cx = SectionPos.blockToSectionCoord(c.getX() - radius); cx <= SectionPos.blockToSectionCoord(c.getX() + radius); cx++) {
@@ -131,7 +145,8 @@ public final class SpawnerBatch {
         }
         if (i >= spots.size() || mc.level == null) {
             searching = false;
-            status = spots.isEmpty() ? "No other spawners within " + radius + " blocks." : "";
+            readDeadline = 0;
+            status = spots.isEmpty() ? "No other spawners in loaded chunks within " + radius + " blocks." : "";
             done.run();
             return;
         }
@@ -139,8 +154,10 @@ public final class SpawnerBatch {
             readNext(spots, i + 1, gen, done);
             return;
         }
+        readDeadline = System.currentTimeMillis() + READ_TIMEOUT_MS;
         WorldSpawner.read(be, data -> {
             if (gen == generation) {
+                readDeadline = 0;
                 found.put(spots.get(i), SpawnerSpec.fromTag(data));
                 read = i + 1;
                 // Next tick: the game clears its query callback after this one returns, which
@@ -169,7 +186,10 @@ public final class SpawnerBatch {
     /** The found spawners that match {@code reference} under the current {@link #match}. */
     public static List<BlockPos> matches(SpawnerSpec reference) {
         List<BlockPos> out = new ArrayList<>();
-        if (found == null || searching || reference == null) {
+        Minecraft mc = Minecraft.getInstance();
+        if (found == null || searching || reference == null || mc.level == null
+                || searchWorld != mc.getConnection()
+                || !mc.level.dimension().identifier().toString().equals(searchDimension)) {
             return out;
         }
         found.forEach((pos, s) -> {
@@ -185,9 +205,26 @@ public final class SpawnerBatch {
      * keeping settings, with just its mobs). Returns null when started, else why not.
      */
     public static String apply(SpawnerSpec reference, SpawnerSpec edited, Commands.Style style) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || searchWorld != mc.getConnection()
+                || !mc.level.dimension().identifier().toString().equals(searchDimension)) {
+            forget();
+            return "World changed. Search again before applying.";
+        }
+        if (searching || writing()) return "Wait for the current operation to finish.";
+        if (ChestIndex.busy) return "Wait for container indexing to finish.";
+        if (!edited.problems().isEmpty()) return "Fix the spawner settings before applying.";
         List<BlockPos> targets = matches(reference);
         if (targets.isEmpty()) {
             return "Nothing to apply to.";
+        }
+        // Validate every location before queuing any write. This detects unloaded or removed
+        // blocks, but is not a fresh server-side comparison of their saved data.
+        for (BlockPos p : targets) {
+            if (!(mc.level.getBlockEntity(p) instanceof SpawnerBlockEntity)) {
+                forget();
+                return "A target was removed or unloaded. Search again before applying.";
+            }
         }
         List<String> commands = new ArrayList<>();
         for (BlockPos p : targets) {
@@ -201,18 +238,29 @@ public final class SpawnerBatch {
             }
             commands.addAll(steps);
         }
-        written = targets.size();
-        CommandQueue.add(commands, () -> status = "Applied to " + written + (written == 1 ? " spawner." : " spawners."));
+        int targetCount = targets.size();
+        CommandQueue.add(commands, () -> status = "Commands sent for " + targetCount
+                + (targetCount == 1 ? " spawner. Rescan to check." : " spawners. Rescan to check."));
         highlight(targets);
         // They no longer hold what was found; search again to see the result.
         generation++;
         found = null;
-        status = "Writing " + written + (written == 1 ? " spawner…" : " spawners…");
+        status = "Sending commands for " + targetCount + (targetCount == 1 ? " spawner…" : " spawners…");
         return null;
     }
 
     /** Continues a search (called every client tick). */
     static void tick() {
+        Minecraft mc = Minecraft.getInstance();
+        if (searching && (mc.level == null || searchWorld != mc.getConnection()
+                || !mc.level.dimension().identifier().toString().equals(searchDimension))) {
+            forget();
+            status = "World changed. Search again.";
+        }
+        if (searching && readDeadline != 0 && System.currentTimeMillis() >= readDeadline) {
+            forget();
+            status = "Read timed out. Search again; no spawners changed.";
+        }
         if (nextRead != null) {
             Runnable r = nextRead;
             nextRead = null;

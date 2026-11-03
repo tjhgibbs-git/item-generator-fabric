@@ -1,5 +1,24 @@
 # Handoff notes
 
+## Current work: spawner workspace (2026-11-02)
+
+**2026-11-03:** the World tab was rebuilt around the map-maker workflow: spawners grouped by kind
+with counts and setup differences, locations expanded per kind, teleport onto a spawner (J then
+edits it), Edit (travel + editor), and Edit all (diff-only bulk edit with review, per-target skip
+reasons, and visiting edge targets with a return trip). Checked in a block-scraper client at
+1920x1080 (GUI scale auto/4, 3 and 2) with 29 spawners across the Overworld and Nether, including
+writes verified with `/data get`. See SPAWNER_BULK_FLOW.md.
+
+The active branch is `design/spawner-workspace`. The initial world-wide browser and bulk executor are implemented. Read [SPAWNER_BULK_FLOW.md](SPAWNER_BULK_FLOW.md) for current behavior and limitations, and [SPAWNER_WORKSPACE_DESIGN.md](SPAWNER_WORKSPACE_DESIGN.md) for the broader design. This section supersedes conflicting older scope notes below.
+
+**Find in world…** defaults to discovery across all saved dimensions in singleplayer, after flushing a saved snapshot. Loaded server chunks overlay saved entries. The browser searches mob labels, dimensions and coordinates, switches between all spawners and matching copies, and expands a paginated locations list with Teleport buttons. Opening a row travels there and reads fresh data into the editor. Cross-dimension travel restores the browser. Nearby loaded-chunk discovery remains secondary.
+
+Whole-world bulk application uses a sequential integrated-server executor, raw-data revalidation, current countdown preservation, unknown-field preservation and serialized readback. It reports updated, skipped and failed counts and supports cancellation. Unloaded targets require a conservative fully generated neighbourhood; explored-edge targets are skipped. Readback verifies in-memory state, not durable disk saving. Discovery is a session snapshot with explicit partial-coverage counts, not a transaction with concurrent saves. More detailed skip reasons, individual target selection, undo, world-local nicknames and advanced tag/armour/biome filters remain future work.
+
+Validation: `./gradlew build` passed, including all 15 game tests. Block-scraper fixtures discovered three exact copies across nearby and distant Overworld locations plus the Nether; per-location teleport and browser restoration after cross-dimension travel passed. A real bulk update changed its target while leaving the source untouched and reported an edge-safety skip separately. Earlier dedicated-server feasibility tests remain in `BridgeGameTests`: they validate distant unload/reload, matching despite different countdowns and retaining countdowns during mutation. They also show tickets can generate absent chunks, which motivates the executor's conservative loading guard.
+
+The built `stacksmith-0.1.0.jar` was copied to `download/` and the owner's Prism 26.3 mods folder with matching SHA-256 checksums. In-game tests are explicitly authorised; use disposable demo worlds for destructive fixtures. Screens changed in future work must still be inspected with block-scraper per AGENTS.md.
+
 Last updated 2026-10-29, from a local WSL machine with a 26.3 dev client (block-scraper) and
 JetBrains Runtime 25 (hot reload of new methods/fields; new static fields still need a client
 restart).

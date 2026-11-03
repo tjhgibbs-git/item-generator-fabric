@@ -20,12 +20,13 @@ import java.util.List;
 public abstract class StacksmithScreen extends Screen {
     protected static final int PAD = 6;
 
-    /** The three editors, as tabs along the top. */
+    /** Editors and the independent world browser. */
     public enum Tab {
         SPAWNER("Spawner", "Mob spawners: what they spawn, how often, and how many"),
         MOB("Mob", "Mobs: type, name, gear, behaviour, stats and effects; summon them or put them in a spawner"),
         CHEST("Chests", "Create containers, edit their slots, or find them in your world"),
-        ITEM("Item", "Items: name, lore, enchantments and every other component");
+        ITEM("Item", "Items: name, lore, enchantments and every other component"),
+        WORLD("World", "Browse saved spawners in this world, independently of your current design");
 
         final String label, tip;
 
@@ -39,11 +40,14 @@ public abstract class StacksmithScreen extends Screen {
     static Tab lastTab = Tab.SPAWNER;
 
     static Screen open(Tab tab, Screen parent) {
+        // An editor opened from the World list returns there; other tabs don't stack on it.
+        if (tab != Tab.WORLD && parent instanceof SpawnerWorldScreen list) parent = list.parent;
         return switch (tab) {
             case CHEST -> new ChestEditorScreen(parent);
             case ITEM -> new ItemEditorScreen(parent);
             case MOB -> new MobEditorScreen(parent);
             case SPAWNER -> new SpawnerEditorScreen(parent);
+            case WORLD -> parent instanceof SpawnerWorldScreen list ? list : new SpawnerWorldScreen(parent);
         };
     }
 
@@ -58,15 +62,25 @@ public abstract class StacksmithScreen extends Screen {
                           String newTip, Runnable newAction) {
         if (current != null) {
             lastTab = current;
+            int navRight = importAction != null || savedAction != null || newAction != null
+                    ? width - PAD - HEADER_RIGHT - 4 : width - PAD;
+            int total = java.util.Arrays.stream(Tab.values()).mapToInt(t -> font.width(t.label) + 18).sum();
             int x = PAD;
-            for (Tab t : Tab.values()) {
-                int w = font.width(t.label) + 20;
-                addRenderableWidget(Chip.of(t.label, w, 14, () -> {
-                    if (t != current) {
-                        minecraft.setScreenAndShow(open(t, parent));
-                    }
-                }).selected(() -> t == current).tip(t.tip).at(x, 5));
-                x += w + 2;
+            if (total > navRight - PAD) {
+                int w = font.width(current.label) + 28;
+                addRenderableWidget(Chip.of(current.label + " v", w, 14,
+                        () -> minecraft.setScreenAndShow(new TabPicker(this, current)))
+                        .tip("Switch editor or open the World browser").at(x, 5));
+                x += w;
+            } else {
+                for (Tab t : Tab.values()) {
+                    int w = font.width(t.label) + 16;
+                    addRenderableWidget(Chip.of(t.label, w, 14, () -> {
+                        if (t != current || t == Tab.WORLD && this instanceof SpawnerBatchScreen browser && browser.filtersCopies())
+                            minecraft.setScreenAndShow(open(t, parent));
+                    }).selected(() -> t == current).tip(t.tip).at(x, 5));
+                    x += w + 2;
+                }
             }
             tabsRight = x;
         }
@@ -88,6 +102,27 @@ public abstract class StacksmithScreen extends Screen {
                     toast(Component.literal("Click New again to start over: unsaved changes are lost"), false);
                 }
             }).at(width - PAD - HEADER_RIGHT, 5).tip(newTip + " (click twice)"));
+        }
+    }
+
+    /** A compact navigation menu when all tabs and editor actions would collide. */
+    private static final class TabPicker extends StacksmithScreen {
+        private final Tab current;
+        TabPicker(Screen parent, Tab current) { super(Component.literal("Go to"), parent); this.current = current; }
+        @Override protected void init() {
+            int w = Math.min(220, width - 24), x = (width - w) / 2;
+            for (int i = 0; i < Tab.values().length; i++) {
+                Tab tab = Tab.values()[i];
+                addRenderableWidget(Chip.of(tab.label, w, 22, () -> {
+                    if (tab == current) onClose();
+                    else minecraft.setScreenAndShow(open(tab, ((StacksmithScreen) parent).parent));
+                }).at(x, 38 + i * 27).selected(() -> tab == current).tip(tab.tip));
+            }
+            addRenderableWidget(Chip.of("Back", w, 18, this::onClose).at(x, height - 30));
+        }
+        @Override protected void extractPanels(GuiGraphicsExtractor g, int mouseX, int mouseY, float partialTick) {
+            panel(g, (width - Math.min(244, width)) / 2, 15, Math.min(244, width), height - 26);
+            g.centeredText(font, title, width / 2, 23, Theme.ACCENT);
         }
     }
 

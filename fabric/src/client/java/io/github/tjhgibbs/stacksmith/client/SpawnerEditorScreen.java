@@ -84,8 +84,17 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     private int loadChipX;
     private final Map<EntitySpec.Slot, ItemStack> slotIcons = new EnumMap<>(EntitySpec.Slot.class);
 
+    /** When editing a group of world spawners together (World tab's Edit all), or null. */
+    private final SpawnerApplyScreen.Targets group;
+
     public SpawnerEditorScreen(Screen parent) {
+        this(parent, null);
+    }
+
+    /** Edits {@code group} together: the main button applies what you change to every one of them. */
+    public SpawnerEditorScreen(Screen parent, SpawnerApplyScreen.Targets group) {
         super(Component.translatable("stacksmith.screen.spawner"), parent);
+        this.group = group;
     }
 
     /** The selected pool entry, or null while the spawner is empty. */
@@ -160,7 +169,9 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                     // Stays tied to the block it was editing, so Overwrite puts the loaded one there.
                     SpawnerSpec loaded = SpawnerSpec.fromTag(data);
                     WorldSpawner.link(loaded, null);
-                    SpawnerEditorScreen fresh = new SpawnerEditorScreen(parent);
+                    if (group != null) Session.spawnerOriginal = group.base().copy();
+                    // Editing a group: the loaded spawner is what they all become.
+                    SpawnerEditorScreen fresh = new SpawnerEditorScreen(parent, group);
                     minecraft.setScreenAndShow(fresh);
                     fresh.toast(Component.literal("Loaded " + SpawnerLog.title(loaded)
                             + " as a reusable template"), true);
@@ -171,19 +182,14 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                     minecraft.setScreenAndShow(new SpawnerEditorScreen(parent));
                 });
         BlockPos looked = WorldSpawner.lookedAtSpawner();
-        // The short label when the full one would run into the title.
-        String loadLabel = I18n.get("stacksmith.button.load_looked_at");
-        if (width - PAD - HEADER_RIGHT - 4 - font.width(loadLabel) - 16 < (width + font.width(title)) / 2 + 4) {
-            loadLabel = I18n.get("stacksmith.button.load_looked_at_short");
-        }
-        int lw = font.width(loadLabel) + 16;
-        Chip load = addRenderableWidget(Chip.of(loadLabel, lw, 14,
+        Chip load = addRenderableWidget(Chip.of("Load", 32, 12,
                 () -> WorldSpawner.load(looked, () -> minecraft.setScreenAndShow(new SpawnerEditorScreen(parent))))
-                .at(width - PAD - HEADER_RIGHT - 4 - lw, 5)
+                .at(PAD + leftW() - 32, TOP)
                 .tip(I18n.get(looked != null ? "stacksmith.tooltip.load_looked_at" : "stacksmith.tooltip.load_looked_at_none")));
         load.active = looked != null && !looked.equals(Session.spawnerPos);
-        loadChipX = load.getX();
-        if (Session.spawnerPos != null && !WorldSpawner.exists(Session.spawnerPos)) {
+        loadChipX = width;
+        if (Session.spawnerPos != null && (!WorldSpawner.exists(Session.spawnerPos)
+                || !minecraft.level.dimension().identifier().toString().equals(Session.spawnerDimension))) {
             Session.spawnerPos = null; // broken or out of reach: placing makes a new one
         }
         buildLeft();
@@ -243,17 +249,21 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
             mid.add(new SelectedMobCard());
             mid.add(new LightCard(entry()));
         }
-        mid.add(new SettingsCard("How often", 0xFF8CC8FF, "When the spawner fires. It waits a random time between the two delays after each spawn.",
-                new Field(SpawnerSpec.Setting.DELAY, "First spawn after", "s", "Time from placing until the first spawn. Default 1 s."),
-                new Field(SpawnerSpec.Setting.MIN_DELAY, "Wait at least", "s", "Shortest wait between spawns. Default 10 s."),
-                new Field(SpawnerSpec.Setting.MAX_DELAY, "Wait at most", "s", "Longest wait between spawns. Default 40 s.")));
+        Field minDelay = new Field(SpawnerSpec.Setting.MIN_DELAY, "Wait at least", "s", "Shortest wait between spawns. Default 10 s.");
+        Field maxDelay = new Field(SpawnerSpec.Setting.MAX_DELAY, "Wait at most", "s", "Longest wait between spawns. Default 40 s.");
+        // Editing many at once leaves out the live countdown: it's each spawner's own, never applied to the group.
+        mid.add(group != null
+                ? new SettingsCard("How often", 0xFF8CC8FF, "It waits a random time between the two delays after each spawn.", minDelay, maxDelay)
+                : new SettingsCard("How often", 0xFF8CC8FF, "When the spawner fires. It waits a random time between the two delays after each spawn.",
+                        new Field(SpawnerSpec.Setting.DELAY, "First spawn after", "s", "Time from placing until the first spawn. Default 1 s."),
+                        minDelay, maxDelay));
         mid.add(new SettingsCard("How many", 0xFFFF6B6B, "How many mobs each spawn makes, and when it holds back.",
                 new Field(SpawnerSpec.Setting.COUNT, "Mobs per spawn", "", "How many it tries to spawn each time. Default 4."),
                 new Field(SpawnerSpec.Setting.MAX_NEARBY, "Pause with", "nearby", "Stops while this many of its mobs are close by. Default 6.")));
         mid.add(new SettingsCard("Where", 0xFF7BD88F, "When it is active, and how far out mobs appear.",
                 new Field(SpawnerSpec.Setting.PLAYER_RANGE, "Runs with a player within", "blocks", "Only spawns while a player is this close. Default 16."),
                 new Field(SpawnerSpec.Setting.SPAWN_RANGE, "Mobs appear within", "blocks", "How far from the spawner mobs are placed. Default 4.")));
-        mid.add(new BatchCard());
+        if (group == null) mid.add(new BatchCard());
         addPaneWidgets(mid);
         mid.layout();
         mid.scroll(midScroll);
@@ -262,9 +272,12 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
     private void buildRight() {
         int x = rightX(), w = rightW();
         int y = buttonsTop();
-        String save = I18n.get(Session.spawnerPos != null ? "stacksmith.button.save_spawner" : "stacksmith.button.place");
-        placeHere = addRenderableWidget(new Chip(Component.literal(save), w, SAVE_H, in -> placeHere())
-                .primary(Session.spawnerPos != null ? 0xFF2F7D46 : 0xFF2E5E8C).at(x, y));
+        String save = group != null ? "Apply to all " + group.entries().size() + "…"
+                : I18n.get(Session.spawnerPos != null ? "stacksmith.button.save_spawner" : "stacksmith.button.place");
+        placeHere = addRenderableWidget(new Chip(Component.literal(save), w, SAVE_H, in -> {
+                    if (group != null) minecraft.setScreenAndShow(new SpawnerApplyScreen(this, group, spawner));
+                    else placeHere();
+                }).primary(group != null || Session.spawnerPos != null ? 0xFF2F7D46 : 0xFF2E5E8C).at(x, y));
         y += SAVE_H + SAVE_STATUS;
         getSpawner = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.get_spawner"), b -> giveSpawner())
                 .bounds(x, y, w, 20).build());
@@ -375,9 +388,15 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
 
     private void buildFooter() {
         int y = height - FOOTER + 3;
-        commandBox = addRenderableWidget(new EditBox(font, PAD, y + 2, width - PAD * 2 - 64 - 50, 16, Component.literal("Command")));
+        // Leaves room for the length ("157/256") between the box and the buttons.
+        int countW = font.width("0000/256") + 8;
+        commandBox = addRenderableWidget(new EditBox(font, PAD, y + 2,
+                width - PAD * 2 - 64 - (group == null ? 104 : 0) - countW, 16, Component.literal("Command")));
         commandBox.setMaxLength(Commands.COMMAND_BLOCK_LIMIT);
         commandBox.setEditable(false);
+        if (group == null) addRenderableWidget(Chip.of("Find copies…", 100, 20,
+                () -> minecraft.setScreenAndShow(new SpawnerBatchScreen(this, true)))
+                .at(width - PAD - 164, y).tip("Discover spawners across the world, inspect copies and rebalance them"));
         addRenderableWidget(Button.builder(Component.translatable("gui.done"), b -> onClose()).bounds(width - PAD - 60, y, 60, 20).build());
     }
 
@@ -428,8 +447,9 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         SpawnerSpec original = Session.spawnerOriginal.copy();
         int entry = Session.spawnerEntry;
         WorldSpawner.link(original, Session.spawnerPos); // same block: keeps the original
+        if (group != null) Session.spawnerOriginal = group.base().copy();
         Session.spawnerEntry = entry;
-        SpawnerEditorScreen fresh = new SpawnerEditorScreen(parent);
+        SpawnerEditorScreen fresh = new SpawnerEditorScreen(parent, group);
         minecraft.setScreenAndShow(fresh);
         fresh.toast(Component.translatable("stacksmith.msg.reset_spawner"), true);
     }
@@ -524,13 +544,16 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         getCommandBlock.active = creative && valid && command.length() <= Commands.COMMAND_BLOCK_LIMIT;
         // A sample position as long as real ones get, to see whether it needs steps or can't be sent.
         List<String> steps = Commands.setSpawnerInSteps(spawner, "-30000000 -64 -30000000", style(), Commands.CHAT_LIMIT);
-        placeHere.active = valid && canPlace(steps);
+        placeHere.active = valid && (group != null
+                ? Delivery.canUse("setblock") && !SpawnerWorldBatch.changes(group.base(), spawner).isEmpty() : canPlace(steps));
         reset.active = Session.spawnerOriginal != null && !Session.spawnerOriginal.toTag().equals(spawner.toTag());
         updateStar();
         copySetblock.active = valid;
         getSpawner.setTooltip(Tooltip.create(Component.translatable(creative ? "stacksmith.tooltip.get_spawner" : "stacksmith.tooltip.get_creative")));
         getCommandBlock.setTooltip(Tooltip.create(Component.translatable(creative ? "stacksmith.tooltip.get_command_block" : "stacksmith.tooltip.get_creative")));
-        placeHere.setTooltip(Tooltip.create(!op ? Component.translatable("stacksmith.tooltip.place_no_permission")
+        placeHere.setTooltip(Tooltip.create(group != null ? Component.literal("Review what changes, then write it to all "
+                + group.entries().size() + " spawners. Anything you don't change stays as each one has it.")
+                : !op ? Component.translatable("stacksmith.tooltip.place_no_permission")
                 : steps == null ? Component.translatable("stacksmith.tooltip.place_too_long")
                 : Session.spawnerPos != null ? Component.translatable("stacksmith.tooltip.save_spawner", at(Session.spawnerPos))
                 : Component.translatable("stacksmith.tooltip.place")));
@@ -547,7 +570,8 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         panel(g, midX() - 2, top, midW() + 4, bottom - top);
         panel(g, rightX() - 2, top, rightW() + 4, bottom - top);
         label(g, spawner.entries().size() > 1 ? "Spawns (picks one)" : "Spawns", PAD + 1, TOP + 2);
-        label(g, font.plainSubstrByWidth(Session.spawnerPos != null ? "Spawner at " + at(Session.spawnerPos) : "New spawner",
+        label(g, font.plainSubstrByWidth(group != null ? "Editing all " + group.entries().size() + " · " + group.name()
+                : Session.spawnerPos != null ? "Spawner at " + at(Session.spawnerPos) : "New spawner",
                 reset.getX() - midX() - 4), midX() + 1, TOP + 2);
         int rx = rightX(), rw = rightW();
         if (!nickname.visible) {
@@ -572,7 +596,12 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
             }
         }
         int sy = placeHere.getY() + SAVE_H + 3;
-        if (Session.spawnerPos == null) {
+        if (group != null) {
+            var changes = SpawnerWorldBatch.changes(group.base(), spawner);
+            int n = changes.settings().size() + (changes.pool() ? 1 : 0);
+            g.text(font, font.plainSubstrByWidth(n == 0 ? "Nothing changed yet" : "● " + n + (n == 1 ? " change" : " changes") + " to apply",
+                    rw - 4), rx + 2, sy, n == 0 ? Theme.TEXT_DIM : Theme.WARN, false);
+        } else if (Session.spawnerPos == null) {
             g.text(font, font.plainSubstrByWidth("Places a new spawner where you look", rw - 4), rx + 2, sy, Theme.TEXT_DIM, false);
         } else if (unsaved()) {
             g.text(font, font.plainSubstrByWidth("● Unsaved changes", rw - 4), rx + 2, sy, Theme.WARN, false);
@@ -742,148 +771,24 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         }
     }
 
-    /**
-     * Applies this spawner to the copies of it nearby: finds spawners within a radius that match
-     * what the linked block holds (as loaded, or as last saved: never the unsaved edits), then
-     * overwrites them. So editing a pig spawner into a zombie one still finds the other pig
-     * spawners, until the zombie is saved.
-     */
+    /** A compact invitation keeps the editor focused; bulk work has its own review flow. */
     private final class BatchCard extends Card {
-        private final SpawnerSpec reference = Session.spawnerSaved;
-        private final boolean allowed = Delivery.canUse("data") && Delivery.canUse("setblock");
-        private final EditBox radius;
-        private final Chip find, identical, sameMobs, settings, apply;
-        private final List<BlockPos> matches = SpawnerBatch.matches(reference);
-        /** Overwrite settings too only applies to Same mob. (Not the chip's visible flag: the pane resets that when scrolling.) */
-        private final boolean showSettings = SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS;
+        private final Chip open;
 
         BatchCard() {
-            super("Apply to nearby copies", 0xFFB48CFF, "Placed several copies of this spawner? Find the ones nearby that match it "
-                    + "as it is in the world (your unsaved edits aren't looked for), and give them all your changes. "
-                    + "This spawner itself is written by Overwrite.");
-            radius = body(new EditBox(font, 0, 0, 30, 14, Component.literal("Radius")));
-            radius.setValue(Integer.toString(SpawnerBatch.radius));
-            radius.setTooltip(Tooltip.create(Component.literal("How far from this spawner to look, up to " + SpawnerBatch.MAX_RADIUS
-                    + " blocks. Only spawners in chunks your game has loaded are found.")));
-            radius.setResponder(t -> {
-                try {
-                    int v = Integer.parseInt(t.strip());
-                    boolean ok = v >= 1 && v <= SpawnerBatch.MAX_RADIUS;
-                    radius.setTextColor(ok ? Theme.TEXT : Theme.BAD);
-                    if (ok && v != SpawnerBatch.radius) {
-                        SpawnerBatch.radius = v;
-                        SpawnerBatch.forget(); // found with the old radius
-                    }
-                } catch (NumberFormatException e) {
-                    radius.setTextColor(Theme.BAD);
-                }
-            });
-            find = body(Chip.of("Find", 40, 14, () -> SpawnerBatch.search(() -> {
-                if (minecraft.gui.screen() == SpawnerEditorScreen.this) {
-                    rebuild();
-                }
-            })).tip("Read the spawners within the radius and count the matching ones"));
-            identical = body(Chip.of("Identical", 60, 14, () -> setMatch(SpawnerBatch.Match.IDENTICAL))
-                    .selected(() -> SpawnerBatch.match == SpawnerBatch.Match.IDENTICAL)
-                    .tip("Only spawners exactly like this one as saved (mobs and every setting), which get everything"));
-            sameMobs = body(Chip.of("Same mob", 60, 14, () -> setMatch(SpawnerBatch.Match.SAME_MOBS))
-                    .selected(() -> SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS)
-                    .tip("Spawners with the same mob(s) as this one as saved, whatever their timing and ranges"));
-            settings = body(Chip.of((SpawnerBatch.overwriteSettings ? "☑" : "☐") + " Overwrite settings too", 100, 14, () -> {
-                SpawnerBatch.overwriteSettings = !SpawnerBatch.overwriteSettings;
-                rebuild();
-            }).left().tip("Off: they get the new mob(s) and keep their own delays, counts and ranges (say, a trigger distance you "
-                    + "tuned). On: they get this spawner's settings too."));
-            int n = matches.size();
-            apply = body(Chip.of(n == 0 ? "Apply to matches" : "Apply to " + n + (n == 1 ? " spawner" : " spawners"), 100, 16, () -> {
-                String why = SpawnerBatch.apply(reference, spawner, style());
-                if (why == null) {
-                    SpawnerLibrary.record(spawner, "Applied to " + n + (n == 1 ? " copy" : " copies"), null);
-                }
-                toast(Component.literal(why == null ? "Overwriting " + n + (n == 1 ? " spawner" : " spawners") : why), why == null);
-                rebuild();
-            }).color(Theme.GOOD).tip("Overwrite the matching spawners with this one"
-                    + (SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS && !SpawnerBatch.overwriteSettings ? "'s mobs (keeping their settings)" : "")));
-            radius.setEditable(ready());
-            identical.active = sameMobs.active = settings.active = ready();
-            updateButtons();
-            if (SpawnerBatch.searched()) {
-                SpawnerBatch.highlight(matches);
-            }
-        }
-
-        private boolean ready() {
-            return reference != null && allowed;
-        }
-
-        /** Searching and writing run on after the card is built, so these follow along. */
-        private void updateButtons() {
-            boolean busy = SpawnerBatch.searching() || SpawnerBatch.writing();
-            find.active = ready() && !busy;
-            apply.active = ready() && !busy && SpawnerBatch.searched() && !matches.isEmpty() && spawner.problems().isEmpty();
-        }
-
-        private void setMatch(SpawnerBatch.Match m) {
-            SpawnerBatch.match = m;
-            rebuild();
+            super("Find copies", 0xFFB48CFF,
+                    "Find copies of this design across the world, then review your changes before applying them.");
+            open = body(Chip.of("Find copies…", 120, 18,
+                    () -> minecraft.setScreenAndShow(new SpawnerBatchScreen(SpawnerEditorScreen.this, true)))
+                    .tip("Find matching spawners in loaded chunks. Your unsaved edits become the replacement."));
         }
 
         @Override
         protected int layoutBody(int x, int y, int w) {
-            radius.setX(x + font.width("Within") + 4);
-            radius.setY(y);
-            find.setX(x + w - find.getWidth());
-            find.setY(y);
-            int cw = (w - font.width("Match") - 6) / 2;
-            identical.setX(x + font.width("Match") + 4);
-            identical.setY(y + 17);
-            identical.setWidth(cw);
-            sameMobs.setWidth(cw);
-            sameMobs.setX(identical.getX() + cw + 2);
-            sameMobs.setY(y + 17);
-            int ry = y + 34;
-            settings.setX(x);
-            settings.setWidth(w);
-            if (showSettings) {
-                settings.setY(ry);
-                ry += 17;
-            } else {
-                settings.setY(-10_000); // off every pane, so it stays hidden
-            }
-            ry += 12; // status line
-            apply.setX(x);
-            apply.setY(ry);
-            apply.setWidth(w);
-            return ry + 16 - y;
-        }
-
-        @Override
-        protected void extractBody(GuiGraphicsExtractor g, int x, int y, int w, int mouseX, int mouseY) {
-            updateButtons();
-            g.text(font, "Within", x, y + 3, Theme.TEXT, false);
-            g.text(font, "blocks", radius.getX() + radius.getWidth() + 4, y + 3, Theme.TEXT_DIM, false);
-            g.text(font, "Match", x, y + 20, Theme.TEXT, false);
-            String line;
-            int color = Theme.TEXT_DIM;
-            if (reference == null) {
-                line = "Load a spawner (look at it, press J) or place this one first.";
-                color = Theme.WARN;
-            } else if (!allowed) {
-                line = "Needs operator (to read and set spawners).";
-                color = Theme.WARN;
-            } else if (!SpawnerBatch.status().isEmpty()) {
-                line = SpawnerBatch.status();
-            } else if (SpawnerBatch.searched()) {
-                line = matches.size() + " of " + SpawnerBatch.foundCount() + " nearby match " + SpawnerLog.title(reference);
-                color = matches.isEmpty() ? Theme.TEXT_DIM : Theme.GOOD;
-            } else {
-                line = "Finds " + SpawnerLog.title(reference) + (unsaved() ? ", as saved" : "");
-            }
-            g.text(font, font.plainSubstrByWidth(line, w), x, apply.getY() - 11, color, false);
-            if (mouseX >= x && mouseX < x + w && mouseY >= apply.getY() - 12 && mouseY < apply.getY() - 1 && reference != null && unsaved()) {
-                g.setTooltipForNextFrame(font, Component.literal("Looks for copies of the spawner as it is in the world. "
-                        + "Overwrite first to look for what you're editing instead."), mouseX, mouseY);
-            }
+            open.setX(x);
+            open.setY(y);
+            open.setWidth(w);
+            return 18;
         }
     }
 
