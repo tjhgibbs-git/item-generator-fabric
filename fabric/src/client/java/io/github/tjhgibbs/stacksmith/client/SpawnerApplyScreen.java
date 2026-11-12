@@ -229,9 +229,15 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
                 if (skipped > 0) { g.text(font, skipped + " skipped", cx, y, Theme.WARN, false); cx += font.width(skipped + " skipped") + 14; }
                 if (failed > 0) g.text(font, failed + " failed", cx, y, Theme.BAD, false);
                 y += 14;
-                if (shownProblems > 0) {
+                String failure = SpawnerWorldBatch.failure;
+                if (failure != null) {
+                    // The server refused or the connection ended: say why rather than "All done".
+                    wrap(g, failure, y, Theme.BAD);
+                } else if (shownProblems > 0) {
                     g.text(font, "Not updated:", x, y + 26, Theme.TEXT_DIM, false);
                     wrap(g, "Changes are saved with the world as usual.", y, Theme.TEXT_FAINT);
+                } else if (SpawnerWorldBatch.status.startsWith("Stopped")) {
+                    wrap(g, "Stopped: the rest were left as they were. Changes are saved with the world as usual.", y, Theme.TEXT_DIM);
                 } else {
                     wrap(g, "All done. Changes are saved with the world as usual.", y, Theme.TEXT_DIM);
                 }

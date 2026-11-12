@@ -26,6 +26,8 @@ public final class SpawnerWorldBatch {
     public static volatile boolean busy;
     public static volatile String status = "";
     public static volatile int completed, skipped, failed, total;
+    /** Why the last remote operation stopped without a result (shown instead of the counts), or null. */
+    public static volatile String failure;
     private static volatile Run current;
 
     /** A target that was not updated, and why (for the results list). */
@@ -45,7 +47,7 @@ public final class SpawnerWorldBatch {
         if (!edited.problems().isEmpty()) return "Fix the spawner settings before applying.";
         int gen = ++remoteGeneration;
         remote = true; remoteConnection = Minecraft.getInstance().getConnection();
-        busy = true; completed = skipped = failed = 0; total = targets.size(); problems.clear();
+        busy = true; completed = skipped = failed = 0; total = targets.size(); problems.clear(); failure = null;
         status = "Waiting for server…";
         io.github.tjhgibbs.stacksmith.core.nbt.Nbt.List keys = Nbt.list();
         targets.forEach(e -> keys.add(Nbt.str(e.key())));
@@ -55,7 +57,7 @@ public final class SpawnerWorldBatch {
         ServerHooks.request(body, reply -> {
             if (gen != remoteGeneration) return;
             if (!reply.getString("op", "").equals("progress")) {
-                status = reply.getString("message", "Server write failed."); busy = remote = false; return;
+                status = failure = reply.getString("message", "Server write failed."); busy = remote = false; return;
             }
             completed = (int) reply.getLong("completed", 0); skipped = (int) reply.getLong("skipped", 0);
             failed = (int) reply.getLong("failed", 0); total = (int) reply.getLong("total", total);
@@ -73,7 +75,7 @@ public final class SpawnerWorldBatch {
     }
     public static boolean busy() {
         if (remote && remoteConnection != Minecraft.getInstance().getConnection()) {
-            remoteGeneration++; remote = busy = false; status = "Disconnected · remaining writes stopped";
+            remoteGeneration++; remote = busy = false; status = failure = "Disconnected · remaining writes stopped";
         }
         Run run = current;
         if (run != null && Minecraft.getInstance().getSingleplayerServer() != run.server) {
@@ -130,7 +132,7 @@ public final class SpawnerWorldBatch {
         if (!Delivery.canUse("setblock")) return "Operator permission is needed.";
         if (targets.isEmpty()) return "No copies selected.";
         if (!edited.problems().isEmpty()) return "Fix the spawner settings before applying.";
-        completed = skipped = failed = 0;
+        completed = skipped = failed = 0; failure = null;
         problems.clear();
         total = targets.size();
         Run run = new Run(server, List.copyOf(targets), edited.copy(), pool, settings, traveller);
@@ -143,7 +145,9 @@ public final class SpawnerWorldBatch {
 
     /** Stops future writes; changes already completed remain. */
     public static void cancel() {
-        if (remote) { ServerHooks.cancel(); return; }
+        // Keep listening after asking the server to stop: its final reply carries the true counts,
+        // the skipped targets and a fresh snapshot (whose revision the next edit must quote).
+        if (remote) { ServerHooks.request(Nbt.compound().put("op", "cancel"), ignored -> {}); status = "Stopping…"; return; }
         Run run = current;
         if (run != null) {
             run.cancelled = true;
