@@ -26,6 +26,8 @@ public final class SpawnerWorldBatch {
     public static volatile boolean busy;
     public static volatile String status = "";
     public static volatile int completed, skipped, failed, total;
+    /** Why the last remote operation stopped without a result (shown instead of the counts), or null. */
+    public static volatile String failure;
     private static volatile Run current;
 
     /** A target that was not updated, and why (for the results list). */
@@ -34,7 +36,47 @@ public final class SpawnerWorldBatch {
 
     private enum Pool { ALWAYS, IF_DIFFERENT, NEVER }
 
+    static boolean available() { return Minecraft.getInstance().getSingleplayerServer() != null || ServerHooks.apply; }
+    private static boolean remote;
+    private static Object remoteConnection;
+    private static int remoteGeneration;
+    private static String remoteStart(List<SpawnerIndex.Entry> targets, SpawnerSpec base, SpawnerSpec edited, boolean pool, boolean settings) {
+        if (!ServerHooks.apply) return ServerHooks.REQUIRED;
+        if (busy()) return "Wait for the current operation to finish.";
+        if (targets.isEmpty()) return "No copies selected.";
+        if (!edited.problems().isEmpty()) return "Fix the spawner settings before applying.";
+        int gen = ++remoteGeneration;
+        remote = true; remoteConnection = Minecraft.getInstance().getConnection();
+        busy = true; completed = skipped = failed = 0; total = targets.size(); problems.clear(); failure = null;
+        status = "Waiting for server…";
+        io.github.tjhgibbs.stacksmith.core.nbt.Nbt.List keys = Nbt.list();
+        targets.forEach(e -> keys.add(Nbt.str(e.key())));
+        Nbt.Compound body = Nbt.compound().put("op", "apply").put("revision", SpawnerIndex.remoteRevision()).put("targets", keys).put("edited", edited.toTag())
+                .put("pool", pool ? 1 : 0).put("settings", settings ? 1 : 0);
+        if (base != null) body.put("base", base.toTag());
+        ServerHooks.request(body, reply -> {
+            if (gen != remoteGeneration) return;
+            if (!reply.getString("op", "").equals("progress")) {
+                status = failure = reply.getString("message", "Server write failed."); busy = remote = false; return;
+            }
+            completed = (int) reply.getLong("completed", 0); skipped = (int) reply.getLong("skipped", 0);
+            failed = (int) reply.getLong("failed", 0); total = (int) reply.getLong("total", total);
+            status = reply.getString("status", ""); busy = reply.getLong("busy", 0) != 0;
+            if (!busy) {
+                if (reply.getList("problems") != null) for (Nbt value : reply.getList("problems").items()) if (value instanceof Nbt.Compound problem) {
+                    var entry = SpawnerIndex.entries.get(problem.getString("key", ""));
+                    if (entry != null) problems.add(new Problem(entry, problem.getString("reason", "")));
+                }
+                if (reply.getCompound("snapshot") != null) SpawnerIndex.remoteSnapshot(reply.getCompound("snapshot"));
+                remote = false;
+            }
+        });
+        return null;
+    }
     public static boolean busy() {
+        if (remote && remoteConnection != Minecraft.getInstance().getConnection()) {
+            remoteGeneration++; remote = busy = false; status = failure = "Disconnected · remaining writes stopped";
+        }
         Run run = current;
         if (run != null && Minecraft.getInstance().getSingleplayerServer() != run.server) {
             run.cancelled = true;
@@ -49,6 +91,7 @@ public final class SpawnerWorldBatch {
 
     /** Null means started; otherwise a human-readable reason why no edits were made. */
     public static String start(List<SpawnerIndex.Entry> targets, SpawnerSpec edited, boolean replaceSettings) {
+        if (Minecraft.getInstance().getSingleplayerServer() == null) return remoteStart(targets, null, edited, SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS, replaceSettings);
         java.util.EnumSet<SpawnerSpec.Setting> settings = java.util.EnumSet.noneOf(SpawnerSpec.Setting.class);
         if (replaceSettings) for (SpawnerSpec.Setting st : SpawnerSpec.Setting.values()) if (st != SpawnerSpec.Setting.DELAY) settings.add(st);
         return start(targets, edited, SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS ? Pool.ALWAYS : Pool.IF_DIFFERENT, settings, null);
@@ -59,6 +102,7 @@ public final class SpawnerWorldBatch {
      * edited, and each setting that was edited. Everything else stays as each target has it.
      */
     public static String startChanges(List<SpawnerIndex.Entry> targets, SpawnerSpec base, SpawnerSpec edited) {
+        if (Minecraft.getInstance().getSingleplayerServer() == null) return remoteStart(targets, base, edited, false, false);
         Changes c = changes(base, edited);
         if (c.isEmpty()) return "Nothing was changed.";
         var player = Minecraft.getInstance().player;
@@ -88,7 +132,7 @@ public final class SpawnerWorldBatch {
         if (!Delivery.canUse("setblock")) return "Operator permission is needed.";
         if (targets.isEmpty()) return "No copies selected.";
         if (!edited.problems().isEmpty()) return "Fix the spawner settings before applying.";
-        completed = skipped = failed = 0;
+        completed = skipped = failed = 0; failure = null;
         problems.clear();
         total = targets.size();
         Run run = new Run(server, List.copyOf(targets), edited.copy(), pool, settings, traveller);
@@ -101,6 +145,9 @@ public final class SpawnerWorldBatch {
 
     /** Stops future writes; changes already completed remain. */
     public static void cancel() {
+        // Keep listening after asking the server to stop: its final reply carries the true counts,
+        // the skipped targets and a fresh snapshot (whose revision the next edit must quote).
+        if (remote) { ServerHooks.request(Nbt.compound().put("op", "cancel"), ignored -> {}); status = "Stopping…"; return; }
         Run run = current;
         if (run != null) {
             run.cancelled = true;
@@ -197,8 +244,9 @@ public final class SpawnerWorldBatch {
                 }
                 Nbt.Compound out = fresh.copy();
                 Nbt.Compound replacement = edited.toTag();
-                // toTag leaves defaults out, so a setting put back to its default is removed: the game reads that as the default.
-                for (SpawnerSpec.Setting s : settings) copyKey(replacement, out, s.key);
+                // Written explicitly, defaults included: toTag leaves defaults out, but the game saves
+                // every setting, so a removed key would never read back as the change being kept.
+                for (SpawnerSpec.Setting s : settings) out.put(s.key, Nbt.s(edited.get(s)));
                 if (pool == Pool.ALWAYS || pool == Pool.IF_DIFFERENT && !target.spec().withPoolOf(edited).sameAs(target.spec())) {
                     copyKey(replacement, out, "SpawnData");
                     copyKey(replacement, out, "SpawnPotentials");

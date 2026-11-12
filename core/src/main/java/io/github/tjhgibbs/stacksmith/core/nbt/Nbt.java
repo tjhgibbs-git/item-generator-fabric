@@ -89,6 +89,11 @@ public sealed interface Nbt permits Nbt.Compound, Nbt.List, Nbt.Str, Nbt.Num, Nb
             return put(key, new Str(value));
         }
 
+        /** Numeric metadata used by the shared server protocol. */
+        public Compound put(String key, long value) {
+            return put(key, Nbt.l(value));
+        }
+
         public Nbt remove(String key) {
             return map.remove(key);
         }

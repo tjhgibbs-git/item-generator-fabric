@@ -35,6 +35,7 @@ public final class TagsScreen extends StacksmithScreen {
     private Chip scan;
     private String query = "";
     private String scanStatus;
+    private boolean scanning;
 
     public TagsScreen(Screen parent, EntitySpec mob, Runnable onChange) {
         super(Component.literal("Tags · " + SpawnerLog.mobName(mob)), parent);
@@ -71,8 +72,8 @@ public final class TagsScreen extends StacksmithScreen {
                 .tip("Show the tags found in this world's datapacks here and in the tag box's suggestions"));
         scan = addRenderableWidget(Chip.of("Scan datapacks", 90, 14, this::scan).at(x, y + 20)
                 .tip(EntityTags.canScan() ? "Read this world's datapacks (functions, predicates, advancements, loot tables) for the tags they use"
-                        : "Only in a world you're running (singleplayer or LAN host): a server's datapacks can't be read from here"));
-        scan.active = EntityTags.canScan();
+                        : "Requires compatible Stacksmith datapack hooks on this server."));
+        scan.active = EntityTags.canScan() && !scanning;
         list.bounds(x, y + 40, w, height - y - 40 - 34);
         fillList();
         addRenderableWidget(Button.builder(Component.translatable("gui.done"), b -> onClose()).bounds(x + w - 70, height - 28, 70, 20).build());
@@ -81,13 +82,20 @@ public final class TagsScreen extends StacksmithScreen {
 
     private void scan() {
         scan.active = false;
+        scanning = true;
         scanStatus = "Reading datapacks…";
         EntityTags.scan(line -> {
+            scanning = false;
             scanStatus = line;
             if (minecraft.gui.screen() == this) {
                 rebuildWidgets();
             }
         });
+    }
+
+    @Override public void tick() {
+        super.tick();
+        if (scan != null) scan.active = EntityTags.canScan() && !scanning;
     }
 
     /** "Found 12 tags · scanned 5 min ago", or why not. */
@@ -97,7 +105,7 @@ public final class TagsScreen extends StacksmithScreen {
         }
         TagMemory.World here = EntityTags.here();
         if (here.scannedAt() == 0) {
-            return EntityTags.canScan() ? "Not scanned yet" : "Datapacks: singleplayer only";
+            return EntityTags.canScan() ? "Not scanned yet" : "Datapacks: server hooks unavailable";
         }
         return here.datapack().size() + " datapack tags · scanned " + SpawnerLog.ago(here.scannedAt(), System.currentTimeMillis());
     }

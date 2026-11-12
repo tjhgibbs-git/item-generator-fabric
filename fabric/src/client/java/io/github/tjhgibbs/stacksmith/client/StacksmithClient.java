@@ -17,7 +17,9 @@ public final class StacksmithClient implements ClientModInitializer {
     public void onInitializeClient() {
         openKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.stacksmith.open", InputConstants.Type.KEYBOARD, InputConstants.KEY_J, CATEGORY));
         CommandQueue.register();
+        ServerHooks.register();
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+            ServerHooks.tick();
             SpawnerBatch.tick();
             ChestIndex.tick();
             CommandQueue.tick();

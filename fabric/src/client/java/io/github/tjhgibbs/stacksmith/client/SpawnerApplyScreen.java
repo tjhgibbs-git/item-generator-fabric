@@ -62,7 +62,7 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
             addRenderableWidget(Chip.of("‹ Back to editor", 100, 20, this::onClose).at(x, bottom));
             apply = addRenderableWidget(Chip.of("Apply to " + n() + " spawners", 140, 20, this::start)
                     .primary(0xFF2F7D46).at(x + w - 140, bottom));
-            apply.active = !changes.isEmpty() && edited.problems().isEmpty();
+            apply.active = SpawnerWorldBatch.available() && !changes.isEmpty() && edited.problems().isEmpty();
         } else if (stage == Stage.RUNNING) {
             stop = addRenderableWidget(Chip.of("Stop", 70, 20, SpawnerWorldBatch::cancel).at(x + w - 70, bottom)
                     .tip("Stops before the next spawner. Ones already updated stay updated."));
@@ -205,8 +205,9 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
                 List<String> notes = new ArrayList<>();
                 notes.add("Everything else stays as each spawner has it.");
                 if (changes.pool() && targets.setups() > 1) notes.add("The mob list is replaced as a whole, including weights and light rules.");
-                notes.add("Far-away spawners are loaded for a moment without moving you. One next to unexplored terrain can't be loaded "
-                        + "that way, so you're taken to it briefly and brought back.");
+                notes.add(minecraft.getSingleplayerServer() != null
+                        ? "Far-away spawners are loaded for a moment. Near unexplored terrain, you may be taken there briefly and brought back."
+                        : "Far-away saved chunks are loaded briefly. Targets near unexplored terrain are skipped; teleport there and edit them locally.");
                 notes.add("A spawner changed since the last scan is left alone and listed.");
                 for (String note : notes) y = wrap(g, note, y, Theme.TEXT_DIM) + 4;
             }
@@ -228,9 +229,15 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
                 if (skipped > 0) { g.text(font, skipped + " skipped", cx, y, Theme.WARN, false); cx += font.width(skipped + " skipped") + 14; }
                 if (failed > 0) g.text(font, failed + " failed", cx, y, Theme.BAD, false);
                 y += 14;
-                if (shownProblems > 0) {
+                String failure = SpawnerWorldBatch.failure;
+                if (failure != null) {
+                    // The server refused or the connection ended: say why rather than "All done".
+                    wrap(g, failure, y, Theme.BAD);
+                } else if (shownProblems > 0) {
                     g.text(font, "Not updated:", x, y + 26, Theme.TEXT_DIM, false);
                     wrap(g, "Changes are saved with the world as usual.", y, Theme.TEXT_FAINT);
+                } else if (SpawnerWorldBatch.status.startsWith("Stopped")) {
+                    wrap(g, "Stopped: the rest were left as they were. Changes are saved with the world as usual.", y, Theme.TEXT_DIM);
                 } else {
                     wrap(g, "All done. Changes are saved with the world as usual.", y, Theme.TEXT_DIM);
                 }
