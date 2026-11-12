@@ -240,8 +240,9 @@ public final class SpawnerWorldBatch {
                 }
                 Nbt.Compound out = fresh.copy();
                 Nbt.Compound replacement = edited.toTag();
-                // toTag leaves defaults out, so a setting put back to its default is removed: the game reads that as the default.
-                for (SpawnerSpec.Setting s : settings) copyKey(replacement, out, s.key);
+                // Written explicitly, defaults included: toTag leaves defaults out, but the game saves
+                // every setting, so a removed key would never read back as the change being kept.
+                for (SpawnerSpec.Setting s : settings) out.put(s.key, Nbt.s(edited.get(s)));
                 if (pool == Pool.ALWAYS || pool == Pool.IF_DIFFERENT && !target.spec().withPoolOf(edited).sameAs(target.spec())) {
                     copyKey(replacement, out, "SpawnData");
                     copyKey(replacement, out, "SpawnPotentials");

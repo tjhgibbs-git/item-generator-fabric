@@ -135,4 +135,26 @@ public final class ServerHooksGameTests {
         } catch (java.io.IOException ex) { h.fail("Region folder unreadable: " + folder + " (" + ex + ")"); return; }
         h.succeed();
     }
+
+    @GameTest(structure = EMPTY, maxTicks = 100)
+    public void settingsPutBackToDefaultsAreVerified(GameTestHelper h) {
+        // The game always saves every setting, so a setting written as its default must still
+        // read back as kept (the "replace timing and ranges" option writes all of them).
+        var target = place(h, 4);
+        var server = h.getLevel().getServer();
+        var index = new ServerIndex(server, () -> true);
+        index.entries.put(target.key(), target);
+        var writer = new ServerBatch(server, index, () -> true, () -> {});
+        var design = new SpawnerSpec().withPoolOf(target.spec());
+        String error = writer.start(List.of(target), design, true, true);
+        if (error != null) { h.fail(error); return; }
+        h.runAfterDelay(10, () -> {
+            if (writer.busy() || writer.completed != 1 || writer.failed != 0) {
+                h.fail("Write not verified: " + writer.status + " " + writer.problems); return;
+            }
+            var raw = McNbt.fromGame(h.getLevel().getBlockEntity(target.pos()).saveWithoutMetadata(h.getLevel().registryAccess()));
+            if (raw.getLong("SpawnCount", 0) != 4 || raw.getLong("Delay", 0) != 123) { h.fail("Unexpected result: " + raw); return; }
+            h.succeed();
+        });
+    }
 }
