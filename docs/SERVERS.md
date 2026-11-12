@@ -54,10 +54,13 @@ implementation on remote servers. This change adds no remote whole-world chest o
 and dedicated-server GameTests for handshake/session reset, stale-target detection, countdown/pool
 preservation, authorization loss, and an index-to-write RPC round trip.
 
-The full build and all 19 server GameTests pass in the development environment. A block-scraper
-client launch was attempted twice; the graphical check was blocked by OpenGL reporting
-`Couldn’t find matching GLX visual` and Vulkan lacking `VK_KHR_surface`. A live multiplayer UI
-check remains to be done.
+Verified in game (2026-11-12, Minecraft 26.3, Fabric Loader 0.20.1, Fabric API 0.165.0+26.3) with a
+real client joining a local dedicated server: capability negotiation, whole-world index across
+saved/unloaded regions and the Nether, verified Edit all and copies-browser writes (countdown kept,
+changed targets and min-above-max skipped, targets near unexplored terrain skipped, far saved targets
+loaded and their tickets released), Stop, remote datapack scan and travel; on a Fabric server without
+the mod and on a vanilla server the World tab, Whole world and Scan datapacks are disabled with a
+tooltip while editors, nearby search, placing and creative delivery work.
 
 For a manual multiplayer check, run a 26.3 Fabric server with Fabric API, install the built JAR,
 join using a client with the same JAR, and wait briefly for negotiation. World should enable and
