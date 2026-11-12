@@ -59,7 +59,9 @@ public final class ServerHooksGameTests {
             h.succeed();
         });
     }
-    @GameTest(structure = EMPTY, maxTicks = 400)
+    // The index reads every saved region of the test world in real time, while test ticks run
+    // unthrottled, so allow plenty of ticks.
+    @GameTest(structure = EMPTY, maxTicks = 200000)
     public void worldIndexAndVerifiedWriteRoundTrip(GameTestHelper h) {
         var target = place(h, 4);
         var service = new WorldService(h.getLevel().getServer());
@@ -118,5 +120,19 @@ public final class ServerHooksGameTests {
         for (byte[] frame : Wire.encode(13, Nbt.compound().put("op", "hello"))) service.receive(UUID.randomUUID(), frame, () -> false, reply);
         if (!responses.isEmpty()) { h.fail("Unauthorized session was offered hooks"); return; }
         service.close(); h.succeed();
+    }
+
+    @GameTest(structure = EMPTY, maxTicks = 100)
+    public void regionFoldersMatchTheWorldLayout(GameTestHelper h) {
+        // 26.x stores every dimension under dimensions/<namespace>/<path>/region; the index must read
+        // those saved regions, not only the chunks that happen to be loaded.
+        var server = h.getLevel().getServer();
+        server.saveEverything(true, true, false);
+        var root = server.getWorldPath(net.minecraft.world.level.storage.LevelResource.ROOT);
+        var folder = ServerIndex.regionFolder(root, h.getLevel().dimension().identifier().toString());
+        try (var files = java.nio.file.Files.list(folder)) {
+            if (files.noneMatch(p -> p.getFileName().toString().endsWith(".mca"))) { h.fail("No region files in " + folder); return; }
+        } catch (java.io.IOException ex) { h.fail("Region folder unreadable: " + folder + " (" + ex + ")"); return; }
+        h.succeed();
     }
 }

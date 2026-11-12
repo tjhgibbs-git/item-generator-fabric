@@ -35,6 +35,23 @@ public final class ServerIndex {
     private final java.util.function.BooleanSupplier active;
     public ServerIndex(MinecraftServer server, java.util.function.BooleanSupplier active) { this.server = server; this.active = active; }
     private static String chunkKey(String dim, int x, int z) { return dim + ":" + x + ":" + z; }
+
+    /**
+     * Where a dimension's region files are. Since 26.1 every dimension, the vanilla three included,
+     * is stored under {@code dimensions/<namespace>/<path>/region}; older worlds kept the overworld
+     * in {@code region} and the Nether/End in {@code DIM-1}/{@code DIM1}.
+     */
+    static Path regionFolder(Path root, String dim) {
+        Path current = root.resolve("dimensions/" + dim.replaceFirst(":", "/") + "/region");
+        if (Files.isDirectory(current)) return current;
+        String legacy = switch (dim) {
+            case "minecraft:overworld" -> "region";
+            case "minecraft:the_nether" -> "DIM-1/region";
+            case "minecraft:the_end" -> "DIM1/region";
+            default -> null;
+        };
+        return legacy != null && Files.isDirectory(root.resolve(legacy)) ? root.resolve(legacy) : current;
+    }
     public boolean safeToLoad(String dim, ChunkPos pos) {
         for (int x = pos.x() - 11; x <= pos.x() + 11; x++)
             for (int z = pos.z() - 11; z <= pos.z() + 11; z++)
@@ -51,9 +68,7 @@ public final class ServerIndex {
         Map<String, Path> folders = new LinkedHashMap<>();
         for (var level : server.getAllLevels()) {
             String dim = level.dimension().identifier().toString();
-            folders.put(dim, root.resolve(dim.equals("minecraft:overworld") ? "region"
-                    : dim.equals("minecraft:the_nether") ? "DIM-1/region" : dim.equals("minecraft:the_end") ? "DIM1/region"
-                    : "dimensions/" + dim.replace(':', '/') + "/region"));
+            folders.put(dim, regionFolder(root, dim));
         }
         Map<String, Region> previous = regions;
         regionsRead = regionsReused = 0;
