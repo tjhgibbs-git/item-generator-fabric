@@ -182,21 +182,27 @@ public final class ServerIndex {
                         case 3 -> raw;
                         default -> throw new IOException("Compression");
                     };
-                    Nbt.Compound chunk;
+                    // Parse only the status and block entities; block palettes, heightmaps and the
+                    // rest of the chunk are skipped, which keeps whole-world scans fast.
+                    var fields = new net.minecraft.nbt.visitors.CollectFields(
+                            new net.minecraft.nbt.visitors.FieldSelector(net.minecraft.nbt.StringTag.TYPE, "Status"),
+                            new net.minecraft.nbt.visitors.FieldSelector(net.minecraft.nbt.ListTag.TYPE, "block_entities"),
+                            new net.minecraft.nbt.visitors.FieldSelector(net.minecraft.nbt.CompoundTag.TYPE, "Level"));
                     try (DataInputStream input = new DataInputStream(stream)) {
-                        chunk = McNbt.fromGame(NbtIo.read(input, NbtAccounter.create(64L * 1024 * 1024)));
+                        NbtIo.parse(input, fields, NbtAccounter.create(64L * 1024 * 1024));
                     }
-                    String chunkStatus = chunk.getString("Status", "");
-                    if (chunkStatus.isEmpty() || chunk.getCompound("Level") != null) { unread++; continue; }
+                    if (!(fields.getResult() instanceof net.minecraft.nbt.CompoundTag chunk)) { unread++; continue; }
+                    String chunkStatus = chunk.getStringOr("Status", "");
+                    if (chunkStatus.isEmpty() || chunk.contains("Level")) { unread++; continue; }
                     if (chunkStatus.equals("minecraft:full") || chunkStatus.equals("full"))
                         full.add(chunkKey(dim, regionX * 32 + (i & 31), regionZ * 32 + (i >> 5)));
-                    Nbt.List bes = chunk.getList("block_entities");
-                    if (bes == null) continue;
-                    for (Nbt n : bes.items()) if (n instanceof Nbt.Compound data
-                            && data.getString("id", "").equals("minecraft:mob_spawner")) {
-                        Entry entry = entry(dim, new BlockPos((int) data.getLong("x", 0), (int) data.getLong("y", 0), (int) data.getLong("z", 0)), data);
-                        found.put(entry.key(), entry);
-                    }
+                    for (net.minecraft.nbt.Tag n : chunk.getListOrEmpty("block_entities"))
+                        if (n instanceof net.minecraft.nbt.CompoundTag tag
+                                && tag.getStringOr("id", "").equals("minecraft:mob_spawner")) {
+                            Nbt.Compound data = McNbt.fromGame(tag);
+                            Entry entry = entry(dim, new BlockPos((int) data.getLong("x", 0), (int) data.getLong("y", 0), (int) data.getLong("z", 0)), data);
+                            found.put(entry.key(), entry);
+                        }
                 } catch (IOException | RuntimeException ex) { unread++; }
             }
         } catch (IOException ex) { unread++; }
