@@ -71,7 +71,7 @@ public final class EntityTags {
 
     /** Whether the datapacks can be read: only when this game runs the world (singleplayer or LAN host). */
     static boolean canScan() {
-        return Minecraft.getInstance().getSingleplayerServer() != null;
+        return Minecraft.getInstance().getSingleplayerServer() != null || ServerHooks.tags;
     }
 
     /**
@@ -84,7 +84,20 @@ public final class EntityTags {
         Minecraft mc = Minecraft.getInstance();
         IntegratedServer server = mc.getSingleplayerServer();
         if (server == null) {
-            done.accept("Only in a world you're running: a server's datapacks can't be read from here.");
+            if (!ServerHooks.tags) { done.accept(ServerHooks.REQUIRED); return; }
+            String world = SpawnerLibrary.world();
+            ServerHooks.request(io.github.tjhgibbs.stacksmith.core.nbt.Nbt.compound().put("op", "tags"), reply -> {
+                var found = reply.getCompound("tags");
+                if (found == null) { done.accept(reply.getString("message", "Datapack scan failed.")); return; }
+                java.util.Map<String, List<String>> tags = new java.util.LinkedHashMap<>();
+                found.entries().forEach(e -> {
+                    if (e.getValue() instanceof io.github.tjhgibbs.stacksmith.core.nbt.Nbt.List sources)
+                        tags.put(e.getKey(), sources.items().stream().filter(n -> n instanceof io.github.tjhgibbs.stacksmith.core.nbt.Nbt.Str)
+                                .map(n -> ((io.github.tjhgibbs.stacksmith.core.nbt.Nbt.Str)n).value()).toList());
+                });
+                memory().scanned(world, tags, (int) reply.getLong("files", 0), System.currentTimeMillis());
+                done.accept("Found " + tags.size() + " tags in server datapacks.");
+            });
             return;
         }
         String world = SpawnerLibrary.world();

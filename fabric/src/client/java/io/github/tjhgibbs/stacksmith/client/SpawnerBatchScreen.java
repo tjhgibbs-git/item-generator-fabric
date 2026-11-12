@@ -27,7 +27,7 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
     private static String browseQuery = "";
     private static int browsePage;
     private EditBox radius, search;
-    private boolean wholeWorld = true, scanned, expanded, allSpawners;
+    private boolean wholeWorld = SpawnerIndex.available(), scanned, expanded, allSpawners;
     private boolean started;
     boolean dismissed;
     private int page;
@@ -79,7 +79,7 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
     private int left() { return (width - panelWidth()) / 2; }
     private int panelWidth() { return Math.min(440, width - 28); }
     private boolean busy() { return SpawnerBatch.searching() || SpawnerBatch.writing() || SpawnerIndex.busy || SpawnerWorldBatch.busy(); }
-    private boolean allowed() { return reference != null && Delivery.canUse("data") && Delivery.canUse("setblock"); }
+    private boolean allowed() { return reference != null && (!wholeWorld || SpawnerWorldBatch.available()) && Delivery.canUse("data") && Delivery.canUse("setblock"); }
     private int count() { return wholeWorld ? worldMatches().size() : SpawnerBatch.matches(reference).size(); }
     private Chip chip(String text, int x, int y, int w, Runnable action) {
         return addRenderableWidget(Chip.of(text, w, 18, action).at(x, y));
@@ -100,7 +100,8 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
             chip(SpawnerIndex.busy || SpawnerBatch.searching() ? "Cancel" : "Update index", x + w - 100, 58, 100, () -> {
                 if (SpawnerIndex.busy) SpawnerIndex.cancel(); else if (SpawnerBatch.searching()) SpawnerBatch.cancel(); else startSearch();
                 rebuildWidgets();
-            }).active = !SpawnerWorldBatch.busy();
+            }).tip(wholeWorld && !SpawnerIndex.available() ? ServerHooks.REQUIRED : "Refresh the index")
+                    .active = !SpawnerWorldBatch.busy() && (!wholeWorld || SpawnerIndex.available());
             search = addRenderableWidget(new EditBox(font, x, 82, w - (reference == null ? 0 : 120), 18, Component.literal("Search mob, dimension or coordinates")));
             search.setHint(Component.literal("Search mob, dimension, coordinates"));
             search.setValue(query);
@@ -188,7 +189,7 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
     private void useSavedIndex() {
         if (!wholeWorld) { scanned = SpawnerBatch.searched(); return; }
         if (!SpawnerIndex.available()) {
-            error = "World browsing requires singleplayer.";
+            error = "World browsing requires compatible Stacksmith server hooks.";
             return;
         }
         scanned = SpawnerIndex.current() && SpawnerIndex.indexed;
@@ -203,7 +204,7 @@ public final class SpawnerBatchScreen extends StacksmithScreen {
         scanned = false;
         Runnable done = () -> { scanned = wholeWorld ? SpawnerIndex.current() && SpawnerIndex.indexed : SpawnerBatch.searched(); if (minecraft.gui.screen() == this) rebuildWidgets(); };
         if (wholeWorld) {
-            if (!SpawnerIndex.available()) { error = "Whole-world discovery requires singleplayer. Choose Nearby on servers."; return; }
+            if (!SpawnerIndex.available()) { error = "Whole-world discovery requires compatible Stacksmith server hooks. Choose Nearby."; return; }
             SpawnerIndex.start(done);
         } else SpawnerBatch.search(done);
     }

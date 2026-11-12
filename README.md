@@ -6,7 +6,9 @@ already have, see the real tooltip and the mob as it will look, and get the resu
 in your inventory, a `/give`, a `/setblock`, or a command block that builds the spawner by
 itself the moment you place it.
 
-Client-side only. It generates items and commands; the server needs nothing installed.
+The same Fabric JAR works on clients and servers. Client-only installation supports the editors,
+creative items and vanilla commands. Optional installation on a Fabric server adds whole-world
+spawner discovery, verified bulk editing and datapack tag scanning. See [Server setup](docs/SERVERS.md).
 
 ## Status
 
@@ -144,7 +146,8 @@ tags: [legendary, bound]
 
 ### World tab: every spawner in the world
 
-For building a map with lots of spawners (singleplayer, or a world you host on LAN). Opening it
+For building a map with lots of spawners (singleplayer, a world you host on LAN, or a Fabric server
+with compatible Stacksmith world hooks). Opening it
 lists every spawner in every dimension, grouped by **kind**: the same mobs with the same gear and
 data. Each kind shows its spawn egg, what sets it apart ("Zombie · Iron Sword, Iron Helmet",
 "Boom Bob · Creeper, powered", pool weights), how many there are, and **N setups** when copies
@@ -203,7 +206,7 @@ Hover a kind for its full mobs and settings.
     functions, predicates, advancements and loot tables; hover a tag for where it was seen) and
     **Datapack tags** to show or hide those. Remembered per world in
     `config/stacksmith/entity-tags.snbt`. Scanning needs a world you're running (singleplayer or
-    LAN host); on a server you still get the tags you've used there.
+    LAN host) or compatible Stacksmith hooks on a Fabric server; otherwise you still get the tags you've used there.
   - Behaviour switches; **Stats**: health, speed, damage, armour, follow range, **Size
     (scale)**, attack knockback, armour toughness, step height, jump strength, gravity,
     reinforcements, and **Reach** (set on the main-hand weapon's `attack_range`).
@@ -225,6 +228,11 @@ the limit: **Get item** (any size, creative), **Get command block** on the Spawn
 tabs, and the spawner's stepwise save.
 
 ### Servers
+
+Install the same JAR on a Fabric server to enable the optional world features. The client
+negotiates support after joining; World and Scan datapacks are greyed out on vanilla servers
+and Fabric servers without compatible hooks. Ordinary editors and nearby tools remain usable.
+See [Server setup](docs/SERVERS.md) for behavior, limits and testing.
 
 - **Get item** puts the item in your inventory the way the creative menu does, so it works on
   any server where you're in creative, no op needed, any size of data.

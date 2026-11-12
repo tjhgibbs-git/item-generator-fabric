@@ -40,6 +40,7 @@ public abstract class StacksmithScreen extends Screen {
     static Tab lastTab = Tab.SPAWNER;
 
     static Screen open(Tab tab, Screen parent) {
+        if (tab == Tab.WORLD && !SpawnerIndex.available()) return new SpawnerEditorScreen(parent);
         // An editor opened from the World list returns there; other tabs don't stack on it.
         if (tab != Tab.WORLD && parent instanceof SpawnerWorldScreen list) parent = list.parent;
         return switch (tab) {
@@ -60,6 +61,7 @@ public abstract class StacksmithScreen extends Screen {
      */
     protected void header(Tab current, String importTip, Runnable importAction, Runnable savedAction,
                           String newTip, Runnable newAction) {
+        worldTabs.clear();
         if (current != null) {
             lastTab = current;
             int navRight = importAction != null || savedAction != null || newAction != null
@@ -75,10 +77,11 @@ public abstract class StacksmithScreen extends Screen {
             } else {
                 for (Tab t : Tab.values()) {
                     int w = font.width(t.label) + 16;
-                    addRenderableWidget(Chip.of(t.label, w, 14, () -> {
+                    Chip tabChip = addRenderableWidget(Chip.of(t.label, w, 14, () -> {
                         if (t != current || t == Tab.WORLD && this instanceof SpawnerBatchScreen browser && browser.filtersCopies())
                             minecraft.setScreenAndShow(open(t, parent));
-                    }).selected(() -> t == current).tip(t.tip).at(x, 5));
+                    }).selected(() -> t == current).tip(t == Tab.WORLD && !SpawnerIndex.available() ? ServerHooks.REQUIRED : t.tip).at(x, 5));
+                    if (t == Tab.WORLD) { worldTabs.add(tabChip); tabChip.active = SpawnerIndex.available(); }
                     x += w + 2;
                 }
             }
@@ -110,13 +113,15 @@ public abstract class StacksmithScreen extends Screen {
         private final Tab current;
         TabPicker(Screen parent, Tab current) { super(Component.literal("Go to"), parent); this.current = current; }
         @Override protected void init() {
+            worldTabs.clear();
             int w = Math.min(220, width - 24), x = (width - w) / 2;
             for (int i = 0; i < Tab.values().length; i++) {
                 Tab tab = Tab.values()[i];
-                addRenderableWidget(Chip.of(tab.label, w, 22, () -> {
+                Chip tabChip = addRenderableWidget(Chip.of(tab.label, w, 22, () -> {
                     if (tab == current) onClose();
                     else minecraft.setScreenAndShow(open(tab, ((StacksmithScreen) parent).parent));
-                }).at(x, 38 + i * 27).selected(() -> tab == current).tip(tab.tip));
+                }).at(x, 38 + i * 27).selected(() -> tab == current).tip(tab == Tab.WORLD && !SpawnerIndex.available() ? ServerHooks.REQUIRED : tab.tip));
+                if (tab == Tab.WORLD) { worldTabs.add(tabChip); tabChip.active = SpawnerIndex.available(); }
             }
             addRenderableWidget(Chip.of("Back", w, 18, this::onClose).at(x, height - 30));
         }
@@ -129,6 +134,7 @@ public abstract class StacksmithScreen extends Screen {
     protected final Screen parent;
     /** The header's Saved… chip; a screen may set these before calling {@link #header}. */
     protected String savedLabel = "Saved…", savedTip = "Save this under a name, or load one you saved";
+    protected final List<Chip> worldTabs = new ArrayList<>();
     private Chip newChip;
     /** A text box to focus (all its text selected) on the next tick; see {@link #focusSoon}. */
     private net.minecraft.client.gui.components.EditBox focusNext;
@@ -288,6 +294,10 @@ public abstract class StacksmithScreen extends Screen {
     @Override
     public void tick() {
         super.tick();
+        worldTabs.forEach(chip -> {
+            boolean available = SpawnerIndex.available();
+            if (chip.active != available) { chip.active = available; chip.tip(available ? Tab.WORLD.tip : ServerHooks.REQUIRED); }
+        });
         if (focusNext != null) {
             if (children().contains(focusNext)) {
                 setFocused(focusNext);

@@ -48,9 +48,50 @@ public final class SpawnerIndex {
     private static final String CACHE_FILE = "stacksmith/spawner-index-v1.bin.gz";
     private static Set<String> fullChunks = Set.of();
 
-    public static boolean available() { return Minecraft.getInstance().getSingleplayerServer() != null; }
+    public static boolean available() { return Minecraft.getInstance().getSingleplayerServer() != null || ServerHooks.index; }
     static boolean current() {
-        return world != null && world == Minecraft.getInstance().getSingleplayerServer();
+        return world != null && world == worldIdentity();
+    }
+    static Object worldIdentity() {
+        var mc = Minecraft.getInstance();
+        return mc.getSingleplayerServer() != null ? mc.getSingleplayerServer() : ServerHooks.index ? mc.getConnection() : null;
+    }
+    private static long remoteRevision;
+    static long remoteRevision() { return remoteRevision; }
+    static void remoteReset() {
+        remoteRevision = 0;
+        if (world != null && world != Minecraft.getInstance().getSingleplayerServer()) {
+            generation++; world = null; entries.clear(); version++; indexed = busy = false;
+        }
+    }
+    static void remoteSnapshot(Nbt.Compound result) {
+        if (result.getList("entries") == null) throw new IllegalArgumentException("Missing index entries");
+        Map<String, Entry> next = new LinkedHashMap<>();
+        for (Nbt value : result.getList("entries").items()) {
+            if (!(value instanceof Nbt.Compound row) || row.getCompound("raw") == null) throw new IllegalArgumentException("Invalid index entry");
+            Entry e = entry(row.getString("dimension", ""), new BlockPos((int) row.getLong("x", 0), (int) row.getLong("y", 0), (int) row.getLong("z", 0)), row.getCompound("raw"));
+            next.put(e.key(), e);
+        }
+        entries.clear(); entries.putAll(next); version++; indexed = true; savedAt = System.currentTimeMillis();
+        remoteRevision = result.getLong("revision", 0);
+        status = entries.size() + " spawners · server snapshot";
+        String warning = result.getString("warning", "");
+        if (!warning.isEmpty()) status += " · " + warning;
+    }
+    private static void remoteRefresh(boolean forceUpdate, Runnable done) {
+        if (!forceUpdate && current() && indexed) { done.run(); return; }
+        if (!ServerHooks.index) { status = ServerHooks.REQUIRED; done.run(); return; }
+        int gen = ++generation;
+        Object expected = worldIdentity();
+        if (world != expected) { entries.clear(); version++; indexed = false; }
+        world = expected; busy = true; status = "Reading server world index…";
+        ServerHooks.request(Nbt.compound().put("op", "index"), reply -> {
+            if (gen != generation || expected != worldIdentity()) return;
+            busy = false;
+            if (reply.getString("op", "").equals("index")) remoteSnapshot(reply);
+            else status = reply.getString("message", "Server index failed.");
+            done.run();
+        });
     }
     private static String chunkKey(String dim, int x, int z) { return dim + ":" + x + ":" + z; }
     public static boolean isFullChunk(String dim, int x, int z) {
@@ -65,6 +106,7 @@ public final class SpawnerIndex {
     }
 
     public static void cancel() {
+        if (Minecraft.getInstance().getSingleplayerServer() == null && busy) ServerHooks.cancel();
         generation++;
         busy = false;
         status = indexed ? "Update cancelled · previous saved results retained" : "Discovery cancelled. No spawners changed.";
@@ -159,9 +201,10 @@ public final class SpawnerIndex {
     private static void refresh(boolean forceUpdate, Runnable done) {
         Minecraft mc = Minecraft.getInstance();
         var server = mc.getSingleplayerServer();
+        if (server == null) { if (!busy) remoteRefresh(forceUpdate, done); return; }
         if (busy) return;
-        if (server == null || mc.level == null) {
-            status = "Whole-world discovery is available in singleplayer. Use nearby on this server.";
+        if (mc.level == null) {
+            status = "Join a world before discovering spawners.";
             done.run();
             return;
         }

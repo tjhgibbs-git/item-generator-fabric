@@ -26,7 +26,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * The World tab: every spawner in this singleplayer world, one row per kind (same mobs, gear
+ * The World tab: every spawner in this local or supported server world, one row per kind (same mobs, gear
  * and data). A kind opens into its locations: click one to teleport onto it, Edit to travel
  * there and edit it, or Edit all to change every copy at once without moving.
  */
@@ -69,7 +69,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
 
     public SpawnerWorldScreen(Screen parent) {
         super(Component.literal("World spawners"), parent);
-        Object world = Minecraft.getInstance().getSingleplayerServer();
+        Object world = SpawnerIndex.worldIdentity();
         if (world != stateWorld) {
             stateWorld = world;
             query = "";
@@ -111,7 +111,8 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
                 .tip("Which dimension to list. Click to switch."));
         rescan = addRenderableWidget(Chip.of("Rescan", rescanW, 16, this::rescan).at(x + w - rescanW, TOP + 4));
         rescan.tip("Save the world and look for spawners again (only regions that changed are re-read). "
-                + "Spawners near you are always up to date when this tab opens.");
+                + (minecraft.getSingleplayerServer() != null ? "Spawners near you refresh when this tab opens."
+                : "Server results are a snapshot; rescan after other builders make changes."));
         expandAll = addRenderableWidget(Chip.of("Open all", 70, 18, this::toggleAll).at(x, height - 25));
         addRenderableWidget(Chip.of("Done", 60, 18, this::onClose).at(x + w - 60, height - 25));
         list.bounds(x, listTop(), w, listBottom() - listTop());
@@ -120,7 +121,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
             if (SpawnerIndex.available()) {
                 SpawnerIndex.ensure(() -> {});
             } else {
-                message("Listing a world's spawners needs a singleplayer world (or one you host on LAN).", Theme.WARN);
+                message("Install compatible Stacksmith world hooks on this server to browse the world.", Theme.WARN);
             }
         }
         regroup();
@@ -402,7 +403,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
         }
         g.fill(x, listTop() - 3, x + w, listTop() - 2, Theme.BORDER);
         if (groups.isEmpty()) {
-            String empty = !SpawnerIndex.available() ? "Open a singleplayer world to list its spawners."
+            String empty = !SpawnerIndex.available() ? "This server does not expose compatible Stacksmith world hooks."
                     : SpawnerIndex.busy && !SpawnerIndex.indexed ? "Looking for spawners in every dimension…"
                     : total == 0 ? "No spawners found in this world yet. Place some, then Rescan."
                     : "No spawners match" + (query.isBlank() ? "" : " “" + query.strip() + "”")
@@ -470,7 +471,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
                     + "written to every one of them. Anything you leave alone stays as each copy has it"
                     + (g.setups() > 1 ? " (they don't all have the same settings)." : ".")
                     + (n < g.total() ? "\nOnly the " + n + " listed: " + (g.total() - n) + " more are hidden by the search or dimension." : ""))));
-            edit.active = Delivery.canUse("setblock");
+            edit.active = Delivery.canUse("setblock") && SpawnerWorldBatch.available();
         }
 
         @Override public int layout(int x, int y, int w) {

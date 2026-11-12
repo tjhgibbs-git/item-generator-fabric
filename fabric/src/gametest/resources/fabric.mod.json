@@ -5,7 +5,8 @@
   "name": "Stacksmith GameTests",
   "environment": "*",
   "entrypoints": {
-    "fabric-gametest": ["io.github.tjhgibbs.stacksmith.gametest.BridgeGameTests"]
+    "fabric-gametest": ["io.github.tjhgibbs.stacksmith.gametest.BridgeGameTests",
+      "io.github.tjhgibbs.stacksmith.server.ServerHooksGameTests"]
   },
   "depends": {
     "fabric-gametest-api-v1": "*"

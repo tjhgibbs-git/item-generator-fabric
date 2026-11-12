@@ -62,7 +62,7 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
             addRenderableWidget(Chip.of("‹ Back to editor", 100, 20, this::onClose).at(x, bottom));
             apply = addRenderableWidget(Chip.of("Apply to " + n() + " spawners", 140, 20, this::start)
                     .primary(0xFF2F7D46).at(x + w - 140, bottom));
-            apply.active = !changes.isEmpty() && edited.problems().isEmpty();
+            apply.active = SpawnerWorldBatch.available() && !changes.isEmpty() && edited.problems().isEmpty();
         } else if (stage == Stage.RUNNING) {
             stop = addRenderableWidget(Chip.of("Stop", 70, 20, SpawnerWorldBatch::cancel).at(x + w - 70, bottom)
                     .tip("Stops before the next spawner. Ones already updated stay updated."));
@@ -205,8 +205,9 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
                 List<String> notes = new ArrayList<>();
                 notes.add("Everything else stays as each spawner has it.");
                 if (changes.pool() && targets.setups() > 1) notes.add("The mob list is replaced as a whole, including weights and light rules.");
-                notes.add("Far-away spawners are loaded for a moment without moving you. One next to unexplored terrain can't be loaded "
-                        + "that way, so you're taken to it briefly and brought back.");
+                notes.add(minecraft.getSingleplayerServer() != null
+                        ? "Far-away spawners are loaded for a moment. Near unexplored terrain, you may be taken there briefly and brought back."
+                        : "Far-away saved chunks are loaded briefly. Targets near unexplored terrain are skipped; teleport there and edit them locally.");
                 notes.add("A spawner changed since the last scan is left alone and listed.");
                 for (String note : notes) y = wrap(g, note, y, Theme.TEXT_DIM) + 4;
             }

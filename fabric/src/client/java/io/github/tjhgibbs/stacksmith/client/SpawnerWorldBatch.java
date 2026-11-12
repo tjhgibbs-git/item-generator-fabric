@@ -34,7 +34,47 @@ public final class SpawnerWorldBatch {
 
     private enum Pool { ALWAYS, IF_DIFFERENT, NEVER }
 
+    static boolean available() { return Minecraft.getInstance().getSingleplayerServer() != null || ServerHooks.apply; }
+    private static boolean remote;
+    private static Object remoteConnection;
+    private static int remoteGeneration;
+    private static String remoteStart(List<SpawnerIndex.Entry> targets, SpawnerSpec base, SpawnerSpec edited, boolean pool, boolean settings) {
+        if (!ServerHooks.apply) return ServerHooks.REQUIRED;
+        if (busy()) return "Wait for the current operation to finish.";
+        if (targets.isEmpty()) return "No copies selected.";
+        if (!edited.problems().isEmpty()) return "Fix the spawner settings before applying.";
+        int gen = ++remoteGeneration;
+        remote = true; remoteConnection = Minecraft.getInstance().getConnection();
+        busy = true; completed = skipped = failed = 0; total = targets.size(); problems.clear();
+        status = "Waiting for server…";
+        io.github.tjhgibbs.stacksmith.core.nbt.Nbt.List keys = Nbt.list();
+        targets.forEach(e -> keys.add(Nbt.str(e.key())));
+        Nbt.Compound body = Nbt.compound().put("op", "apply").put("revision", SpawnerIndex.remoteRevision()).put("targets", keys).put("edited", edited.toTag())
+                .put("pool", pool ? 1 : 0).put("settings", settings ? 1 : 0);
+        if (base != null) body.put("base", base.toTag());
+        ServerHooks.request(body, reply -> {
+            if (gen != remoteGeneration) return;
+            if (!reply.getString("op", "").equals("progress")) {
+                status = reply.getString("message", "Server write failed."); busy = remote = false; return;
+            }
+            completed = (int) reply.getLong("completed", 0); skipped = (int) reply.getLong("skipped", 0);
+            failed = (int) reply.getLong("failed", 0); total = (int) reply.getLong("total", total);
+            status = reply.getString("status", ""); busy = reply.getLong("busy", 0) != 0;
+            if (!busy) {
+                if (reply.getList("problems") != null) for (Nbt value : reply.getList("problems").items()) if (value instanceof Nbt.Compound problem) {
+                    var entry = SpawnerIndex.entries.get(problem.getString("key", ""));
+                    if (entry != null) problems.add(new Problem(entry, problem.getString("reason", "")));
+                }
+                if (reply.getCompound("snapshot") != null) SpawnerIndex.remoteSnapshot(reply.getCompound("snapshot"));
+                remote = false;
+            }
+        });
+        return null;
+    }
     public static boolean busy() {
+        if (remote && remoteConnection != Minecraft.getInstance().getConnection()) {
+            remoteGeneration++; remote = busy = false; status = "Disconnected · remaining writes stopped";
+        }
         Run run = current;
         if (run != null && Minecraft.getInstance().getSingleplayerServer() != run.server) {
             run.cancelled = true;
@@ -49,6 +89,7 @@ public final class SpawnerWorldBatch {
 
     /** Null means started; otherwise a human-readable reason why no edits were made. */
     public static String start(List<SpawnerIndex.Entry> targets, SpawnerSpec edited, boolean replaceSettings) {
+        if (Minecraft.getInstance().getSingleplayerServer() == null) return remoteStart(targets, null, edited, SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS, replaceSettings);
         java.util.EnumSet<SpawnerSpec.Setting> settings = java.util.EnumSet.noneOf(SpawnerSpec.Setting.class);
         if (replaceSettings) for (SpawnerSpec.Setting st : SpawnerSpec.Setting.values()) if (st != SpawnerSpec.Setting.DELAY) settings.add(st);
         return start(targets, edited, SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS ? Pool.ALWAYS : Pool.IF_DIFFERENT, settings, null);
@@ -59,6 +100,7 @@ public final class SpawnerWorldBatch {
      * edited, and each setting that was edited. Everything else stays as each target has it.
      */
     public static String startChanges(List<SpawnerIndex.Entry> targets, SpawnerSpec base, SpawnerSpec edited) {
+        if (Minecraft.getInstance().getSingleplayerServer() == null) return remoteStart(targets, base, edited, false, false);
         Changes c = changes(base, edited);
         if (c.isEmpty()) return "Nothing was changed.";
         var player = Minecraft.getInstance().player;
@@ -101,6 +143,7 @@ public final class SpawnerWorldBatch {
 
     /** Stops future writes; changes already completed remain. */
     public static void cancel() {
+        if (remote) { ServerHooks.cancel(); return; }
         Run run = current;
         if (run != null) {
             run.cancelled = true;

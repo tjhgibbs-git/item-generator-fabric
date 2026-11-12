@@ -545,7 +545,7 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         // A sample position as long as real ones get, to see whether it needs steps or can't be sent.
         List<String> steps = Commands.setSpawnerInSteps(spawner, "-30000000 -64 -30000000", style(), Commands.CHAT_LIMIT);
         placeHere.active = valid && (group != null
-                ? Delivery.canUse("setblock") && !SpawnerWorldBatch.changes(group.base(), spawner).isEmpty() : canPlace(steps));
+                ? SpawnerWorldBatch.available() && Delivery.canUse("setblock") && !SpawnerWorldBatch.changes(group.base(), spawner).isEmpty() : canPlace(steps));
         reset.active = Session.spawnerOriginal != null && !Session.spawnerOriginal.toTag().equals(spawner.toTag());
         updateStar();
         copySetblock.active = valid;
