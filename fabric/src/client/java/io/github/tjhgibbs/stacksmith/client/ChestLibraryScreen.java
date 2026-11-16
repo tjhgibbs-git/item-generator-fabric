@@ -12,7 +12,7 @@ import net.minecraft.network.chat.Component;
 import java.io.IOException;
 import java.util.*;
 
-/** World destinations and reusable stars are deliberately separate lists. */
+/** Starred containers: reusable contents with no place in the world. (Containers in the world are on the World tab.) */
 public final class ChestLibraryScreen extends StacksmithScreen {
     private static final Presets PRESETS = new Presets(PresetsScreen.ROOT);
     private final ScrollPane list = pane(new ScrollPane());
@@ -35,35 +35,13 @@ public final class ChestLibraryScreen extends StacksmithScreen {
     @Override
     protected void init() {
         int x = left(), w = width - 24;
-        addRenderableWidget(
-                Chip.of(
-                                "World",
-                                56,
-                                16,
-                                () -> {
-                                    starred = false;
-                                    rebuildWidgets();
-                                })
-                        .selected(() -> !starred)
-                        .at(x, 12));
-        addRenderableWidget(
-                Chip.of(
-                                "★ Starred",
-                                72,
-                                16,
-                                () -> {
-                                    starred = true;
-                                    rebuildWidgets();
-                                })
-                        .selected(() -> starred)
-                        .at(x + 60, 12));
         EditBox search =
                 addRenderableWidget(
                         new EditBox(
                                 font,
-                                x + 140,
+                                x,
                                 12,
-                                w - 140,
+                                w,
                                 16,
                                 Component.literal("Search containers")));
         search.setMaxLength(200);
@@ -125,19 +103,6 @@ public final class ChestLibraryScreen extends StacksmithScreen {
                                         }
                                     })
                             .at(x + w - 104, 36));
-        } else {
-            Chip scan =
-                    addRenderableWidget(
-                            Chip.of(
-                                            ChestIndex.busy ? "Indexing…" : "Index world",
-                                            90,
-                                            16,
-                                            () -> {
-                                                ChestIndex.start();
-                                                rebuildWidgets();
-                                            })
-                                    .at(x, 36));
-            scan.active = !ChestIndex.busy && Delivery.inWorld() && !SpawnerBatch.searching();
         }
         list.bounds(x, 76, w, height - 110);
         fill();
@@ -199,114 +164,6 @@ public final class ChestLibraryScreen extends StacksmithScreen {
                 } catch (RuntimeException e) {
                     /* Hand-edited invalid preset: leave on disk. */
                 }
-            }
-        else
-            for (ChestIndex.Entry e :
-                    ChestIndex.entries.values().stream()
-                            .sorted(
-                                    Comparator.comparing(ChestIndex.Entry::dimension)
-                                            .thenComparingDouble(
-                                                    e ->
-                                                            minecraft.player == null
-                                                                    ? 0
-                                                                    : e.pos()
-                                                                            .distSqr(
-                                                                                    minecraft.player
-                                                                                            .blockPosition())))
-                            .toList()) {
-                if (!matches(e.searchText())) continue;
-                Chip edit =
-                        Chip.of(
-                                        "Edit",
-                                        42,
-                                        16,
-                                        () ->
-                                                ChestIndex.load(
-                                                        e,
-                                                        fresh -> {
-                                                            Session.chest = fresh.chest().copy();
-                                                            Session.chestLink = fresh;
-                                                            minecraft.setScreenAndShow(
-                                                                    new ChestEditorScreen(
-                                                                            parent
-                                                                                            instanceof
-                                                                                            ChestEditorScreen
-                                                                                                    s
-                                                                                    ? s.parent
-                                                                                    : parent));
-                                                        }))
-                                .tip(
-                                        "Reload live contents before editing. Teleport here first"
-                                            + " if unloaded.");
-                edit.active =
-                        Delivery.inWorld()
-                                && ChestIndex.dimension().equals(e.dimension())
-                                && ChestIndex.supported(minecraft.level.getBlockEntity(e.pos()))
-                                && Delivery.canUse("data")
-                                && !ChestIndex.busy
-                                && !SpawnerBatch.searching();
-                Chip tp =
-                        Chip.of(
-                                        "Teleport",
-                                        58,
-                                        16,
-                                        () -> {
-                                            toast(
-                                                    Delivery.run(
-                                                            "execute in "
-                                                                    + e.dimension()
-                                                                    + " run tp @s "
-                                                                    + (e.pos().getX() + 0.5)
-                                                                    + " "
-                                                                    + (e.pos().getY() + 1)
-                                                                    + " "
-                                                                    + (e.pos().getZ() + 0.5)),
-                                                    true);
-                                        })
-                                .tip(
-                                        "Teleport above this container; check the surroundings"
-                                            + " before moving.");
-                tp.active = Delivery.canUse("execute") && Delivery.canUse("tp");
-                addRow(
-                        io.github.tjhgibbs.stacksmith.core.Ids.pretty(e.chest().block())
-                                + " · "
-                                + e.chest().occupied()
-                                + " slots",
-                        e.where() + " · " + e.dimension(),
-                        List.of(
-                                edit,
-                                tp,
-                                Chip.of(
-                                                "☆",
-                                                20,
-                                                16,
-                                                () -> {
-                                                    try {
-                                                        PRESETS.save(
-                                                                Presets.Kind.CHEST,
-                                                                PRESETS.freeName(
-                                                                        Presets.Kind.CHEST,
-                                                                        io.github.tjhgibbs
-                                                                                .stacksmith.core.Ids
-                                                                                .pretty(
-                                                                                        e.chest()
-                                                                                                .block())),
-                                                                BlockTemplate.save(
-                                                                        e.chest().command()));
-                                                        toast(
-                                                                Component.literal(
-                                                                        "Starred reusable"
-                                                                            + " contents"),
-                                                                true);
-                                                    } catch (IOException ex) {
-                                                        toast(
-                                                                Component.literal(ex.getMessage()),
-                                                                false);
-                                                    }
-                                                })
-                                        .tip(
-                                                "Star the indexed contents as a reusable relative"
-                                                    + " command")));
             }
         addPaneWidgets(list);
         list.layout();

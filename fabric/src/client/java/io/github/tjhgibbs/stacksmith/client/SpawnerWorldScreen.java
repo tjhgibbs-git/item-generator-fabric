@@ -26,11 +26,14 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * The World tab: every spawner in this local or supported server world, one row per kind (same mobs, gear
- * and data). A kind opens into its locations: click one to teleport onto it, Edit to travel
+ * The World tab: every spawner in this world (or, on a server without Stacksmith, in the chunks
+ * loaded around you), one row per kind (same mobs, gear and data). A kind opens into its locations: click one to teleport onto it, Edit to travel
  * there and edit it, or Edit all to change every copy at once without moving.
  */
-public final class SpawnerWorldScreen extends StacksmithScreen {
+public final class SpawnerWorldScreen extends StacksmithScreen implements StacksmithScreen.WorldList {
+    /** Which of the World tab's two lists was shown last: containers (true) or spawners. */
+    static boolean containers;
+
     /** One kind of spawner, as listed: the copies that pass the search and dimension filter. */
     record Group(String key, String title, String detail, String nickname, SpawnerSpec base, String baseSetup,
                  List<SpawnerIndex.Entry> entries, int total, int setups, boolean matchedByLocation) {}
@@ -40,6 +43,8 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
     private static String query = "";
     /** Dimension shown, or null for all. */
     private static String dimension;
+    /** Only what is within this many blocks of you (0: any distance). */
+    private static int near;
     private static final Set<String> open = new HashSet<>();
     private static double scroll;
     /** The location teleported to last, marked in the list. */
@@ -56,7 +61,9 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
     private static final int TOP = 24;
     private final ScrollPane list = pane(new ScrollPane());
     private EditBox search;
-    private Chip rescan, dimChip, expandAll;
+    private Chip rescan, dimChip, nearChip, expandAll, primeAll;
+    /** The world, dimension and source the list was last made for: a new one means reading again. */
+    private static String ensuredFor;
     private List<Group> groups = List.of();
     private Map<String, String> setupOf = new HashMap<>();
     private int total, kinds;
@@ -74,6 +81,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
             stateWorld = world;
             query = "";
             dimension = null;
+            near = 0;
             open.clear();
             scroll = 0;
             lastVisited = null;
@@ -94,9 +102,10 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
     @Override
     protected void init() {
         header(Tab.WORLD, null, null, null, null, null);
+        worldSwitch(false);
         int x = innerX(), w = innerW();
-        int rescanW = 62, dimW = 92;
-        search = addRenderableWidget(new EditBox(font, x, TOP + 4, w - rescanW - dimW - 8, 16, Component.literal("Search")));
+        int rescanW = 62, dimW = 80, nearW = 72;
+        search = addRenderableWidget(new EditBox(font, x, TOP + 4, w - rescanW - dimW - nearW - 12, 16, Component.literal("Search")));
         search.setHint(Component.literal("Search mobs, names, gear or coordinates"));
         search.setMaxLength(100);
         search.setValue(query);
@@ -106,22 +115,29 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
             list.scroll(0);
             refilter();
         });
+        nearChip = addRenderableWidget(Chip.of(nearLabel(near), nearW, 16, () -> {
+            near = nextNear(near, SpawnerIndex.loadedOnly() ? SpawnerIndex.clientReach : Integer.MAX_VALUE);
+            list.scroll(0);
+            refilter();
+        }).at(x + w - rescanW - dimW - nearW - 8, TOP + 4));
         dimChip = addRenderableWidget(Chip.of(dimensionLabel(dimension), dimW, 16, this::cycleDimension)
                 .at(x + w - rescanW - 4 - dimW, TOP + 4)
                 .tip("Which dimension to list. Click to switch."));
         rescan = addRenderableWidget(Chip.of("Rescan", rescanW, 16, this::rescan).at(x + w - rescanW, TOP + 4));
-        rescan.tip("Save the world and look for spawners again (only regions that changed are re-read). "
-                + (minecraft.getSingleplayerServer() != null ? "Spawners near you refresh when this tab opens."
-                : "Server results are a snapshot; rescan after other builders make changes."));
+        rescan.tip(Backend.host() != null ? "Save the world and look for spawners again (only regions that changed are re-read). "
+                + "Spawners near you refresh when this tab opens."
+                : ServerHooks.index ? "Ask the server for its spawners again. Server results are a snapshot; rescan after other builders make changes."
+                : "Read the spawners in the chunks loaded around you again. Stacksmith isn't on this server, so that is as far as it can see: "
+                + "rescan after moving to another area.");
         expandAll = addRenderableWidget(Chip.of("Open all", 70, 18, this::toggleAll).at(x, height - 25));
+        primeAll = addRenderableWidget(Chip.of("Prime all…", 70, 18, this::primeAll).at(x + 74, height - 25));
         addRenderableWidget(Chip.of("Done", 60, 18, this::onClose).at(x + w - 60, height - 25));
         list.bounds(x, listTop(), w, listBottom() - listTop());
         if (!started) {
             started = true;
             if (SpawnerIndex.available()) {
+                ensuredFor = sourceKey();
                 SpawnerIndex.ensure(() -> {});
-            } else {
-                message("Install compatible Stacksmith world hooks on this server to browse the world.", Theme.WARN);
             }
         }
         regroup();
@@ -185,6 +201,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
             boolean kindMatches = SpawnerLog.matches(kindText, q);
             List<SpawnerIndex.Entry> shown = all.stream()
                     .filter(e -> dimension == null || e.dimension().equals(dimension))
+                    .filter(e -> within(e.dimension(), e.pos(), near))
                     .filter(e -> kindMatches || SpawnerLog.matches(locationText(e), q))
                     .sorted(nearestFirst())
                     .toList();
@@ -249,10 +266,28 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
         rescan.setMessage(Component.literal(SpawnerIndex.busy ? "Cancel" : "Rescan"));
         rescan.active = SpawnerIndex.available() && !SpawnerWorldBatch.busy();
         dimChip.setMessage(Component.literal(dimensionLabel(dimension)));
+        nearChip.setMessage(Component.literal(nearLabel(near)));
+        nearChip.tip(nearTip(SpawnerIndex.loadedOnly() ? SpawnerIndex.clientReach : 0));
         dimChip.active = perDimension.size() > 1 || dimension != null;
         boolean anyClosed = groups.stream().anyMatch(g -> !isOpen(g));
         expandAll.setMessage(Component.literal(anyClosed ? "Open all" : "Close all"));
         expandAll.active = !groups.isEmpty();
+        int unprimed = (int) groups.stream().flatMap(g -> g.entries().stream()).filter(e -> e.spec().get(SpawnerSpec.Setting.DELAY) != 0).count();
+        primeAll.active = unprimed > 0 && SpawnerWorldBatch.canPrime() && Delivery.canUse("setblock");
+        primeAll.tip(!SpawnerWorldBatch.canPrime() ? "This server's Stacksmith hooks are too old to prime spawners: update them."
+                : unprimed == 0 ? "Every listed spawner is already primed: its countdown is 0, so it fires as soon as a player is in range."
+                : "Set the countdown of every listed spawner to 0, so each fires as soon as a player walks in range ("
+                + unprimed + " of them aren't). You review the list first; nothing else about them changes.");
+    }
+
+    /** Reviews setting the countdown of every listed spawner (the search and dimension filter apply) to 0. */
+    private void primeAll() {
+        if (SpawnerWorldBatch.busy()) { message("Wait for the update to finish.", Theme.WARN); return; }
+        scroll = list.scroll();
+        List<SpawnerIndex.Entry> all = groups.stream().flatMap(g -> g.entries().stream()).toList();
+        boolean filtered = all.size() < total;
+        minecraft.setScreenAndShow(new SpawnerApplyScreen(this, new SpawnerApplyScreen.Targets(
+                (filtered ? "the " + all.size() + " listed spawners" : "all " + all.size() + " spawners"), new SpawnerSpec(), all, this)));
     }
 
     private void toggle(Group g) {
@@ -344,7 +379,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
         Session.spawnerOriginal = g.base().copy();
         String name = g.nickname() != null ? g.nickname() : g.title();
         minecraft.setScreenAndShow(new SpawnerEditorScreen(this,
-                new SpawnerApplyScreen.Targets(name, g.base().copy(), g.entries(), g.setups(), this)));
+                new SpawnerApplyScreen.Targets(name, g.base().copy(), g.entries(), this)));
     }
 
     private void message(String text, int color) {
@@ -357,7 +392,52 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
     @Override
     public void tick() {
         super.tick();
+        // Hooks answering after you joined, or travelling to another dimension (a list read from
+        // loaded chunks is of one dimension): read the list again from the source there is now.
+        String source = sourceKey();
+        if (!source.equals(ensuredFor) && SpawnerIndex.available() && !SpawnerIndex.busy && !SpawnerWorldBatch.busy()) {
+            ensuredFor = source;
+            if (!SpawnerIndex.current()) { anchor = null; SpawnerIndex.ensure(() -> {}); }
+        }
         if (SpawnerIndex.version != shownVersion || SpawnerIndex.busy != shownBusy) regroup();
+    }
+
+    private static String sourceKey() {
+        return System.identityHashCode(SpawnerIndex.worldIdentity()) + " " + SpawnerIndex.clientBackend()
+                + (SpawnerIndex.clientBackend() ? " " + Backend.dimension() : "");
+    }
+
+    // ---- the distance filter (shared with the container list) ------------------------------------
+
+    private static final int[] NEAR = {0, 32, 64, 128, 256};
+
+    static String nearLabel(int r) {
+        return r == 0 ? "Any distance" : "Within " + r;
+    }
+
+    /** The next choice after {@code r}, leaving out distances beyond what can be seen ({@code reach}). */
+    static int nextNear(int r, int reach) {
+        int i = 0;
+        while (i < NEAR.length && NEAR[i] != r) i++;
+        for (int k = 1; k <= NEAR.length; k++) {
+            int v = NEAR[(i + k) % NEAR.length];
+            if (v == 0 || v < reach) return v;
+        }
+        return 0;
+    }
+
+    static String nearTip(int reach) {
+        return "Only list what is within this many blocks of where you stand now (in this dimension). Click to switch. "
+                + "Edit all, Prime all and Edit item act on what is listed."
+                + (reach > 0 ? "\n\nStacksmith isn't on this server, so the list is already just the chunks loaded around you (about "
+                + reach + " blocks)." : "");
+    }
+
+    /** Whether {@code pos} passes the distance filter: in your dimension and within {@code r} blocks of you. */
+    static boolean within(String dimension, net.minecraft.core.BlockPos pos, int r) {
+        var mc = Minecraft.getInstance();
+        if (r == 0 || mc.player == null || mc.level == null) return true;
+        return dimension.equals(mc.level.dimension().identifier().toString()) && pos.distSqr(mc.player.blockPosition()) <= (long) r * r;
     }
 
     @Override
@@ -391,7 +471,9 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
             state = SpawnerIndex.skipped + " chunks unread: list may be incomplete";
             stateColor = Theme.WARN;
         } else if (SpawnerIndex.savedAt > 0 && SpawnerIndex.current()) {
-            state = "Scanned " + SpawnerLog.ago(SpawnerIndex.savedAt, System.currentTimeMillis());
+            boolean loaded = SpawnerIndex.loadedOnly();
+            state = (loaded ? "Loaded chunks only · " : "Scanned ") + SpawnerLog.ago(SpawnerIndex.savedAt, System.currentTimeMillis());
+            if (loaded) stateColor = Theme.WARN;
         } else {
             state = "";
         }
@@ -403,11 +485,15 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
         }
         g.fill(x, listTop() - 3, x + w, listTop() - 2, Theme.BORDER);
         if (groups.isEmpty()) {
-            String empty = !SpawnerIndex.available() ? "This server does not expose compatible Stacksmith world hooks."
-                    : SpawnerIndex.busy && !SpawnerIndex.indexed ? "Looking for spawners in every dimension…"
-                    : total == 0 ? "No spawners found in this world yet. Place some, then Rescan."
+            String empty = !SpawnerIndex.available() ? "Join a world to list its spawners."
+                    : SpawnerIndex.busy && !SpawnerIndex.indexed ? (SpawnerIndex.clientBackend() ? "Reading the spawners in the chunks loaded around you…"
+                    : "Looking for spawners in every dimension…")
+                    : total == 0 ? (!SpawnerIndex.current() ? SpawnerIndex.status
+                    : SpawnerIndex.loadedOnly() ? "No spawners in the chunks loaded around you. Go to another area, then Rescan."
+                    : "No spawners found in this world yet. Place some, then Rescan.")
                     : "No spawners match" + (query.isBlank() ? "" : " “" + query.strip() + "”")
-                    + (dimension == null ? "." : " in " + dimensionLabel(dimension) + ".");
+                    + (dimension == null ? "" : " in " + dimensionLabel(dimension))
+                    + (near == 0 ? "." : " within " + near + " blocks of you.");
             int ty = listTop() + 14;
             for (var line : font.split(Component.literal(empty), w - 20)) {
                 g.centeredText(font, line, x + w / 2, ty, Theme.TEXT_DIM);
@@ -415,11 +501,11 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
             }
         }
         if (!message.isEmpty()) {
-            int mx = x + 76, mw = w - 76 - 66;
+            int mx = x + 150, mw = w - 150 - 66;
             g.text(font, font.plainSubstrByWidth(message, mw), mx, height - 20, messageColor, false);
         } else if (!groups.isEmpty()) {
-            String hint = "Click a kind to see where they are; click a location to teleport onto it.";
-            g.text(font, font.plainSubstrByWidth(hint, w - 76 - 66), x + 76, height - 20, Theme.TEXT_FAINT, false);
+            String hint = "Click a kind for locations; click one to teleport.";
+            g.text(font, font.plainSubstrByWidth(hint, w - 150 - 66), x + 150, height - 20, Theme.TEXT_FAINT, false);
         }
     }
 
@@ -470,7 +556,8 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
                     : "Edit all " + n + " together, without travelling: what you change in the editor is "
                     + "written to every one of them. Anything you leave alone stays as each copy has it"
                     + (g.setups() > 1 ? " (they don't all have the same settings)." : ".")
-                    + (n < g.total() ? "\nOnly the " + n + " listed: " + (g.total() - n) + " more are hidden by the search or dimension." : ""))));
+                    + (n < g.total() ? "\nOnly the " + n + " listed: " + (g.total() - n) + " more are hidden by the search or filters." : "")
+                    + (SpawnerWorldBatch.byCommands() ? "\nStacksmith isn't on this server: they are changed with commands, then read back." : ""))));
             edit.active = Delivery.canUse("setblock") && SpawnerWorldBatch.available();
         }
 
@@ -532,7 +619,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
     }
 
     /** A small triangle: pointing right when closed, down when open. */
-    private static void chevron(GuiGraphicsExtractor g, int x, int y, boolean down, int color) {
+    static void chevron(GuiGraphicsExtractor g, int x, int y, boolean down, int color) {
         for (int i = 0; i < 4; i++) {
             if (down) g.fill(x + i, y + i, x + 7 - i, y + i + 1, color);
             else g.fill(x + 1 + i, y - 1 + i, x + 2 + i, y + 6 - i, color);
@@ -669,7 +756,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
         };
     }
 
-    private static int dimensionColor(String id) {
+    static int dimensionColor(String id) {
         return switch (id) {
             case "minecraft:overworld" -> 0xFF8FD18F;
             case "minecraft:the_nether" -> 0xFFFF8A65;

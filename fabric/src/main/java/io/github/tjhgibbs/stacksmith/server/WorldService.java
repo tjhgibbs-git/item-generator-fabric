@@ -63,7 +63,7 @@ public final class WorldService implements AutoCloseable {
             String op = body.getString("op", "");
             if (op.equals("hello")) {
                 send(id, Nbt.compound().put("op", "hello").put("version", Wire.VERSION)
-                        .put("index", 1).put("apply", 1).put("tags", 1)); return;
+                        .put("index", 1).put("apply", 1).put("tags", 1).put("undo", 1).put("prime", 1)); return;
             }
             if (op.equals("cancel")) {
                 operation++;
@@ -98,6 +98,12 @@ public final class WorldService implements AutoCloseable {
                         }
                         targets.add(index.entries.get(str.value()));
                     }
+                    if (body.getLong("prime", 0) != 0) {
+                        request = id; working = this;
+                        String why = batch.prime(targets);
+                        if (why != null) { working = null; send(id, error(why)); }
+                        return;
+                    }
                     Nbt.Compound tag = body.getCompound("edited");
                     if (tag == null) { send(id, error("Missing spawner definition.")); return; }
                     SpawnerSpec edited = SpawnerSpec.fromTag(tag);
@@ -105,6 +111,11 @@ public final class WorldService implements AutoCloseable {
                     String why = body.getCompound("base") != null
                             ? batch.startChanges(targets, SpawnerSpec.fromTag(body.getCompound("base")), edited)
                             : batch.start(targets, edited, body.getLong("pool", 0) != 0, body.getLong("settings", 0) != 0);
+                    if (why != null) { working = null; send(id, error(why)); }
+                }
+                case "undo" -> {
+                    request = id; working = this;
+                    String why = batch.undo();
                     if (why != null) { working = null; send(id, error(why)); }
                 }
                 case "tags" -> {

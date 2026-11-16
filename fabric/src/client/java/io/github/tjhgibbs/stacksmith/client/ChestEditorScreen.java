@@ -23,14 +23,35 @@ public final class ChestEditorScreen extends StacksmithScreen {
     private Chip save;
     private final List<Chip> slots = new ArrayList<>();
 
+    /** Containers with identical contents being edited together (World tab's Edit all), and the list to go back to. */
+    public record Group(String name, ChestSpec base, List<ChestIndex.Entry> entries, Screen list) {}
+
+    /** When editing several world containers together, or null. */
+    private final Group group;
+
     public ChestEditorScreen(Screen parent) {
-        this(parent, Session.chest, null);
+        this(parent, Session.chest, null, null);
+    }
+
+    /** Edits {@code group} together: the main button gives every one of them these contents. */
+    public ChestEditorScreen(Screen parent, Group group, ChestSpec contents) {
+        this(parent, contents, null, group);
     }
 
     private ChestEditorScreen(Screen parent, ChestSpec chest, Consumer<ChestSpec> done) {
+        this(parent, chest, done, null);
+    }
+
+    private ChestEditorScreen(Screen parent, ChestSpec chest, Consumer<ChestSpec> done, Group group) {
         super(Component.literal(done == null ? "Chests" : "Shulker contents"), parent);
         this.chest = done == null ? chest : chest.copy();
         this.done = done;
+        this.group = group;
+    }
+
+    /** Editing the session's own container: a new one, or the one linked in the world. */
+    private boolean own() {
+        return done == null && group == null;
     }
 
     private int left() {
@@ -42,7 +63,7 @@ public final class ChestEditorScreen extends StacksmithScreen {
     }
 
     private void changed() {
-        if (done == null) Session.chest = chest;
+        if (own()) Session.chest = chest;
         saveArmed = false;
         rebuildWidgets();
     }
@@ -81,11 +102,11 @@ public final class ChestEditorScreen extends StacksmithScreen {
                 done == null ? Tab.CHEST : null,
                 null,
                 null,
-                done == null
+                own()
                         ? () -> minecraft.setScreenAndShow(new ChestLibraryScreen(this, true))
                         : null,
                 "Start an empty chest",
-                done == null
+                own()
                         ? () -> {
                             chest = new ChestSpec();
                             Session.chestLink = null;
@@ -103,28 +124,33 @@ public final class ChestEditorScreen extends StacksmithScreen {
         type.setX(x + 120);
         type.setY(46);
         type.setValueQuietly(Ids.brief(chest.block()));
+        // Editing all: each keeps the block it is (a barrel stays a barrel); only contents change.
+        type.active = group == null;
+        type.setEditable(group == null);
         type.onAccept(
                 id -> {
                     if (!types().contains(Ids.brief(id))) return;
                     try {
                         chest.block(id);
-                        if (done == null) Session.chest = chest;
+                        if (own()) Session.chest = chest;
                         saveArmed = false;
                     } catch (IllegalArgumentException e) {
                         toast(Component.literal(e.getMessage()), false);
                         type.setValueQuietly(Ids.brief(chest.block()));
                     }
                 });
-        if (done == null) {
+        if (own()) {
             addRenderableWidget(
                     Chip.of(
                                     "Find in world…",
                                     96,
                                     16,
-                                    () ->
-                                            minecraft.setScreenAndShow(
-                                                    new ChestLibraryScreen(this, false)))
-                            .at(x, 25));
+                                    () -> {
+                                        SpawnerWorldScreen.containers = true;
+                                        minecraft.setScreenAndShow(new ContainerWorldScreen(parent));
+                                    })
+                            .at(x, 25)
+                            .tip("Every container in this world, grouped by what's in them: teleport to one, edit one, or edit all alike"));
             Chip load =
                     addRenderableWidget(
                             Chip.of(
@@ -153,20 +179,19 @@ public final class ChestEditorScreen extends StacksmithScreen {
             load.active =
                     ChestIndex.supported(WorldSpawner.lookedAtBlockEntity())
                             && Delivery.canUse("data")
-                            && !ChestIndex.busy
-                            && !SpawnerBatch.searching();
+                            && !ChestIndex.busy;
             if (Session.chestLink != null)
                 addRenderableWidget(
                         Chip.of(
-                                        "Unlink",
-                                        48,
+                                        "Use as a new copy",
+                                        108,
                                         16,
                                         () -> {
                                             Session.chestLink = null;
                                             changed();
                                         })
-                                .at(x + w - 48, 25)
-                                .tip("Keep the contents as a new reusable container"));
+                                .at(x + w - 108, 25)
+                                .tip("Stop editing this container and keep the contents as a new one to place somewhere else. This container stays as it is in the world."));
         }
         int cell = Math.min(32, w / 9), gx = x + (w - cell * 9) / 2;
         for (int i = 0; i < 27; i++) {
@@ -212,6 +237,18 @@ public final class ChestEditorScreen extends StacksmithScreen {
                                         })
                                 .at(x + 90, 176));
         clear.active = chest.slot(selected) != null;
+        if (chest.lootTable())
+            addRenderableWidget(
+                    Chip.of(
+                                    "Drop loot table",
+                                    100,
+                                    16,
+                                    () -> {
+                                        chest.unpackLootTable();
+                                        changed();
+                                    })
+                            .at(x + 168, 176)
+                            .tip("Stop this container generating loot when first opened, so you can set its contents yourself"));
         ItemSpec item = chest.slot(selected);
         if (item != null && ChestSpec.shulker(item.id()))
             addRenderableWidget(
@@ -257,16 +294,20 @@ public final class ChestEditorScreen extends StacksmithScreen {
             save =
                     addRenderableWidget(
                             Chip.of(
-                                            saveArmed
-                                                    ? "Confirm write"
-                                                    : Session.chestLink == null
-                                                            ? "Place here"
-                                                            : "Save to chest",
+                                            group != null
+                                                    ? "Apply to all " + group.entries().size() + "…"
+                                                    : saveArmed
+                                                            ? "Confirm write"
+                                                            : Session.chestLink == null
+                                                                    ? "Place here"
+                                                                    : "Save this one",
                                             100,
                                             18,
-                                            this::write)
+                                            group != null
+                                                    ? () -> minecraft.setScreenAndShow(new ChestApplyScreen(this, group, chest))
+                                                    : this::write)
                                     .at(x, y)
-                                    .primary(0xFF2F7D46));
+                                    .primary(group != null ? 0xFF8A6A1E : Session.chestLink == null ? 0xFF2E5E8C : 0xFF2F7D46));
             addRenderableWidget(
                                     Chip.of(
                                                     "Take item",
@@ -313,8 +354,7 @@ public final class ChestEditorScreen extends StacksmithScreen {
         if (chest.lootTable()) {
             toast(
                     Component.literal(
-                            "Open this loot chest in the world first, then reload it to edit its"
-                                + " generated contents."),
+                            "This is a loot chest: Drop loot table to set its contents yourself."),
                     false);
             return;
         }
@@ -401,6 +441,11 @@ public final class ChestEditorScreen extends StacksmithScreen {
     }
 
     private void updateSave() {
+        if (save != null && group != null) {
+            save.active = ChestWorldBatch.available() && Delivery.canUse("setblock")
+                    && !chest.data().equals(group.base().data());
+            return;
+        }
         if (save != null)
             save.active =
                     Delivery.inWorld()
@@ -421,16 +466,36 @@ public final class ChestEditorScreen extends StacksmithScreen {
         int x = left(), w = panelWidth();
         panel(g, x - 5, 43, w + 10, height - 73);
         label(g, "Container type", x, 50);
-        String context =
-                done != null
-                        ? "Shulker contents · Back discards changes"
-                        : Session.chestLink == null
-                                ? "New container · " + chest.occupied() + " / 27 slots"
-                                : "Linked: "
-                                        + Session.chestLink.where()
-                                        + " · "
-                                        + Session.chestLink.dimension();
-        g.text(font, font.plainSubstrByWidth(context, w), x, 66, Theme.TEXT_DIM, false);
+        // The same scope strip as the spawner editor: what this editor is pointed at, in the main button's colour.
+        String tag, context;
+        int bar, stripe;
+        if (done != null) {
+            tag = "INSIDE A SHULKER";
+            context = "Back discards changes";
+            bar = 0xFF2A333C;
+            stripe = Theme.TEXT_DIM;
+        } else if (group != null) {
+            tag = "ALL " + group.entries().size();
+            context = group.name() + " · every one gets these contents";
+            bar = 0xFF4A3A14;
+            stripe = 0xFFFFC14D;
+        } else if (Session.chestLink != null) {
+            tag = "THIS CONTAINER";
+            context = Ids.pretty(Session.chestLink.chest().block()) + " at " + Session.chestLink.where()
+                    + (ChestIndex.dimension().equals(Session.chestLink.dimension()) ? ""
+                    : " · " + SpawnerWorldScreen.dimensionLabel(Session.chestLink.dimension()));
+            bar = 0xFF1F4A2C;
+            stripe = 0xFF7BD88F;
+        } else {
+            tag = "NEW CONTAINER";
+            context = "not in the world yet · " + chest.occupied() + " / 27 slots";
+            bar = 0xFF1E3550;
+            stripe = 0xFF5C8DBF;
+        }
+        g.fill(x - 5, 63, x + w + 5, 76, bar);
+        g.fill(x - 5, 63, x - 2, 76, stripe);
+        g.text(font, tag, x + 2, 66, stripe, false);
+        g.text(font, font.plainSubstrByWidth(context, w - font.width(tag) - 10), x + 8 + font.width(tag), 66, 0xFFFFFFFF, false);
         ItemSpec item = chest.slot(selected);
         String description =
                 "Slot "
@@ -443,7 +508,9 @@ public final class ChestEditorScreen extends StacksmithScreen {
                     font,
                     font.plainSubstrByWidth(
                             chest.lootTable()
-                                    ? "Loot chest: open in-world, then reload before editing."
+                                    ? "Loot chest: fills itself when first opened. Drop the loot table to set contents."
+                                    : group != null
+                                    ? "Change the contents, then Apply: a review lists every container first."
                                     : saveArmed
                                             ? "Writes replace this container's contents. Click"
                                                   + " Confirm write."

@@ -49,8 +49,8 @@ public final class WorldSpawner {
         BlockPos pos = be.getBlockPos();
         Nbt.Compound local = McNbt.fromGame(be.saveWithoutMetadata(Delivery.registries()));
         if (Delivery.canUse("data") && mc.getConnection() != null) {
-            mc.getConnection().getDebugQueryHandler().queryBlockEntityTag(pos, tag -> mc.execute(() ->
-                    then.accept(tag != null ? McNbt.fromGame(tag) : local)));
+            // Through the shared queue: a world scan may be reading too, and the game keeps one query open.
+            BlockReads.readFirst(pos, tag -> then.accept(tag != null ? tag : local));
         } else {
             then.accept(local);
         }
@@ -84,9 +84,9 @@ public final class WorldSpawner {
                 || Minecraft.getInstance().level != null && !Minecraft.getInstance().level.dimension().identifier().toString().equals(Session.spawnerDimension)) {
             Session.spawnerOriginal = null;
             Session.spawnerSaved = null;
-            SpawnerBatch.forget();
         }
         Session.spawner = spawner;
+        Session.spawnerCopyOf = null;
         Session.spawnerEntry = 0;
         Session.spawnerPos = pos == null ? null : pos.immutable();
         Session.spawnerDimension = pos == null || Minecraft.getInstance().level == null ? null

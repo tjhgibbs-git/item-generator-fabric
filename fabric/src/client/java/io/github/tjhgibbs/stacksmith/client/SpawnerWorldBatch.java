@@ -19,7 +19,12 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
-/** Sequential, revalidated singleplayer writes without moving the player or rewriting region files. */
+/**
+ * Changes several spawners, each checked against what the list showed before it is written.
+ * Three ways, picked automatically (see {@link Backend}): on the server thread when this game
+ * runs the world, through Stacksmith's hooks on a dedicated server, or else with commands over
+ * the loaded chunks around you ({@link CommandRun}). Never rewrites region files.
+ */
 public final class SpawnerWorldBatch {
     private SpawnerWorldBatch() {}
 
@@ -36,24 +41,37 @@ public final class SpawnerWorldBatch {
 
     private enum Pool { ALWAYS, IF_DIFFERENT, NEVER }
 
-    static boolean available() { return Minecraft.getInstance().getSingleplayerServer() != null || ServerHooks.apply; }
+    static boolean available() {
+        return Backend.host() != null || ServerHooks.apply || Minecraft.getInstance().getConnection() != null;
+    }
+    /** No host and no hooks: changes go out as commands, to loaded spawners in your dimension. */
+    static boolean byCommands() { return Backend.commandsOnly(ServerHooks.apply); }
+    /** The last run (or the one running) was by commands. */
+    static volatile boolean lastByCommands;
     private static boolean remote;
     private static Object remoteConnection;
     private static int remoteGeneration;
-    private static String remoteStart(List<SpawnerIndex.Entry> targets, SpawnerSpec base, SpawnerSpec edited, boolean pool, boolean settings) {
+    /** Whether the server holds an update of ours that it can undo. */
+    private static boolean remoteUndo;
+
+    private static String remoteStart(List<SpawnerIndex.Entry> targets, SpawnerSpec base, SpawnerSpec edited) {
         if (!ServerHooks.apply) return ServerHooks.REQUIRED;
         if (busy()) return "Wait for the current operation to finish.";
-        if (targets.isEmpty()) return "No copies selected.";
+        if (targets.isEmpty()) return "No spawners selected.";
         if (!edited.problems().isEmpty()) return "Fix the spawner settings before applying.";
-        int gen = ++remoteGeneration;
-        remote = true; remoteConnection = Minecraft.getInstance().getConnection();
-        busy = true; completed = skipped = failed = 0; total = targets.size(); problems.clear(); failure = null;
-        status = "Waiting for server…";
         io.github.tjhgibbs.stacksmith.core.nbt.Nbt.List keys = Nbt.list();
         targets.forEach(e -> keys.add(Nbt.str(e.key())));
-        Nbt.Compound body = Nbt.compound().put("op", "apply").put("revision", SpawnerIndex.remoteRevision()).put("targets", keys).put("edited", edited.toTag())
-                .put("pool", pool ? 1 : 0).put("settings", settings ? 1 : 0);
-        if (base != null) body.put("base", base.toTag());
+        remoteRequest(Nbt.compound().put("op", "apply").put("revision", SpawnerIndex.remoteRevision()).put("targets", keys)
+                .put("edited", edited.toTag()).put("base", base.toTag()), targets.size(), false);
+        return null;
+    }
+
+    private static void remoteRequest(Nbt.Compound body, int count, boolean undoing) {
+        int gen = ++remoteGeneration;
+        lastByCommands = false;
+        remote = true; remoteConnection = Minecraft.getInstance().getConnection();
+        busy = true; completed = skipped = failed = 0; total = count; problems.clear(); failure = null;
+        status = "Waiting for server…";
         ServerHooks.request(body, reply -> {
             if (gen != remoteGeneration) return;
             if (!reply.getString("op", "").equals("progress")) {
@@ -63,22 +81,22 @@ public final class SpawnerWorldBatch {
             failed = (int) reply.getLong("failed", 0); total = (int) reply.getLong("total", total);
             status = reply.getString("status", ""); busy = reply.getLong("busy", 0) != 0;
             if (!busy) {
+                if (reply.getCompound("snapshot") != null) SpawnerIndex.remoteSnapshot(reply.getCompound("snapshot"));
                 if (reply.getList("problems") != null) for (Nbt value : reply.getList("problems").items()) if (value instanceof Nbt.Compound problem) {
                     var entry = SpawnerIndex.entries.get(problem.getString("key", ""));
                     if (entry != null) problems.add(new Problem(entry, problem.getString("reason", "")));
                 }
-                if (reply.getCompound("snapshot") != null) SpawnerIndex.remoteSnapshot(reply.getCompound("snapshot"));
+                remoteUndo = !undoing && completed > 0;
                 remote = false;
             }
         });
-        return null;
     }
     public static boolean busy() {
         if (remote && remoteConnection != Minecraft.getInstance().getConnection()) {
-            remoteGeneration++; remote = busy = false; status = failure = "Disconnected · remaining writes stopped";
+            remoteGeneration++; remote = busy = remoteUndo = false; status = failure = "Disconnected · remaining writes stopped";
         }
         Run run = current;
-        if (run != null && Minecraft.getInstance().getSingleplayerServer() != run.server) {
+        if (run != null && Backend.host() != run.server) {
             run.cancelled = true;
             current = null;
             busy = false;
@@ -87,26 +105,93 @@ public final class SpawnerWorldBatch {
         }
         return busy;
     }
-    public static String status() { busy(); return status; }
-
-    /** Null means started; otherwise a human-readable reason why no edits were made. */
-    public static String start(List<SpawnerIndex.Entry> targets, SpawnerSpec edited, boolean replaceSettings) {
-        if (Minecraft.getInstance().getSingleplayerServer() == null) return remoteStart(targets, null, edited, SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS, replaceSettings);
-        java.util.EnumSet<SpawnerSpec.Setting> settings = java.util.EnumSet.noneOf(SpawnerSpec.Setting.class);
-        if (replaceSettings) for (SpawnerSpec.Setting st : SpawnerSpec.Setting.values()) if (st != SpawnerSpec.Setting.DELAY) settings.add(st);
-        return start(targets, edited, SpawnerBatch.match == SpawnerBatch.Match.SAME_MOBS ? Pool.ALWAYS : Pool.IF_DIFFERENT, settings, null);
-    }
+    public static String status() { busy(); return lastByCommands && busy ? CommandRun.status() : status; }
 
     /**
      * Applies only what changed from {@code base} to {@code edited}: the mob pool if it was
      * edited, and each setting that was edited. Everything else stays as each target has it.
      */
     public static String startChanges(List<SpawnerIndex.Entry> targets, SpawnerSpec base, SpawnerSpec edited) {
-        if (Minecraft.getInstance().getSingleplayerServer() == null) return remoteStart(targets, base, edited, false, false);
         Changes c = changes(base, edited);
+        if (Backend.host() == null) {
+            if (ServerHooks.apply) return remoteStart(targets, base, edited);
+            if (c.isEmpty()) return "Nothing was changed.";
+            return commandStart(targets, edited, c, null, false);
+        }
         if (c.isEmpty()) return "Nothing was changed.";
         var player = Minecraft.getInstance().player;
-        return start(targets, edited, c.pool() ? Pool.ALWAYS : Pool.NEVER, c.settings(), player == null ? null : player.getUUID());
+        return start(targets, edited, c.pool() ? Pool.ALWAYS : Pool.NEVER, c.settings(), player == null ? null : player.getUUID(), null);
+    }
+
+    /** Whether every listed spawner's countdown can be set to 0 here. */
+    static boolean canPrime() {
+        if (Backend.host() != null) return true;
+        // Hooks from before priming existed can't; without hooks it is a plain command.
+        return ServerHooks.apply ? ServerHooks.prime : available();
+    }
+
+    /**
+     * Sets the countdown of each target to 0, so it spawns as soon as a player is in range.
+     * Nothing else changes. Null means started; otherwise why not.
+     */
+    public static String startPrime(List<SpawnerIndex.Entry> targets) {
+        if (Backend.host() == null && byCommands()) return commandStart(targets, new SpawnerSpec(), null, null, true);
+        if (Backend.host() == null) {
+            if (!canPrime()) return ServerHooks.REQUIRED;
+            if (busy()) return "Wait for the current operation to finish.";
+            if (targets.isEmpty()) return "No spawners selected.";
+            io.github.tjhgibbs.stacksmith.core.nbt.Nbt.List keys = Nbt.list();
+            targets.forEach(e -> keys.add(Nbt.str(e.key())));
+            remoteRequest(Nbt.compound().put("op", "apply").put("revision", SpawnerIndex.remoteRevision()).put("targets", keys)
+                    .put("prime", 1), targets.size(), false);
+            return null;
+        }
+        var player = Minecraft.getInstance().player;
+        primeNext = true;
+        return start(targets, new SpawnerSpec(), Pool.NEVER, java.util.EnumSet.noneOf(SpawnerSpec.Setting.class),
+                player == null ? null : player.getUUID(), null);
+    }
+
+    private static boolean primeNext, lastPrimed;
+
+    /** A spawner the last update changed: as it is now, and its data before. */
+    private record Undo(SpawnerIndex.Entry after, Nbt.Compound before) {}
+    private static volatile List<Undo> lastChanges = List.of();
+    private static Object lastChangesWorld;
+
+    /** Whether the last update can be put back (one level; an undo can't be undone). */
+    public static boolean canUndo() {
+        if (busy()) return false;
+        var server = Backend.host();
+        if (server != null) return !lastChanges.isEmpty() && lastChangesWorld == server;
+        if (remoteUndo && ServerHooks.undo && remoteConnection == Minecraft.getInstance().getConnection()) return true;
+        // By commands: the before-data is kept here, until you disconnect.
+        return lastByCommands && !lastChanges.isEmpty() && lastChangesWorld == Minecraft.getInstance().getConnection();
+    }
+
+    /**
+     * Puts back what the last update changed, wherever the spawner is still as that update left
+     * it. Null means started; otherwise why not.
+     */
+    public static String undo() {
+        if (!canUndo()) return "Nothing to undo.";
+        if (Backend.host() == null && lastByCommands) {
+            java.util.Map<String, Nbt.Compound> restore = new java.util.HashMap<>();
+            List<SpawnerIndex.Entry> targets = new java.util.ArrayList<>();
+            for (Undo u : lastChanges) { restore.put(u.after().key(), u.before()); targets.add(u.after()); }
+            return commandStart(targets, new SpawnerSpec(), null, restore, false);
+        }
+        if (Backend.host() == null) {
+            remoteUndo = false;
+            remoteRequest(Nbt.compound().put("op", "undo"), completed, true);
+            return null;
+        }
+        java.util.Map<String, Nbt.Compound> restore = new java.util.HashMap<>();
+        List<SpawnerIndex.Entry> targets = new java.util.ArrayList<>();
+        for (Undo u : lastChanges) { restore.put(u.after().key(), u.before()); targets.add(u.after()); }
+        var player = Minecraft.getInstance().player;
+        return start(targets, new SpawnerSpec(), Pool.NEVER, java.util.EnumSet.noneOf(SpawnerSpec.Setting.class),
+                player == null ? null : player.getUUID(), restore);
     }
 
     /** What an edit of {@code base} changed: the pool, and these settings (never the countdown). */
@@ -123,28 +208,124 @@ public final class SpawnerWorldBatch {
 
     /** {@code traveller}: the player to take briefly to spawners that can't be loaded from afar, or null to skip those. */
     private static String start(List<SpawnerIndex.Entry> targets, SpawnerSpec edited, Pool pool,
-                                java.util.EnumSet<SpawnerSpec.Setting> settings, java.util.UUID traveller) {
+                                java.util.EnumSet<SpawnerSpec.Setting> settings, java.util.UUID traveller,
+                                java.util.Map<String, Nbt.Compound> restore) {
         Minecraft mc = Minecraft.getInstance();
-        MinecraftServer server = mc.getSingleplayerServer();
-        if (busy() || SpawnerBatch.writing() || SpawnerBatch.searching() || ChestIndex.busy || SpawnerIndex.busy)
+        MinecraftServer server = Backend.host();
+        boolean prime = primeNext;
+        primeNext = false;
+        if (busy() || CommandQueue.busy() || ChestIndex.busy || SpawnerIndex.busy)
             return "Wait for the current operation to finish.";
         if (server == null) return "Whole-world editing requires a singleplayer world.";
         if (!Delivery.canUse("setblock")) return "Operator permission is needed.";
-        if (targets.isEmpty()) return "No copies selected.";
-        if (!edited.problems().isEmpty()) return "Fix the spawner settings before applying.";
+        if (targets.isEmpty()) return "No spawners selected.";
+        if (restore == null && !prime && !edited.problems().isEmpty()) return "Fix the spawner settings before applying.";
         completed = skipped = failed = 0; failure = null;
         problems.clear();
         total = targets.size();
         Run run = new Run(server, List.copyOf(targets), edited.copy(), pool, settings, traveller);
+        run.restore = restore;
+        run.prime = prime;
+        run.restoreDelay = restore != null && lastPrimed;
         current = run;
         busy = true;
-        status = "Updating 0 / " + total + " copies…";
+        lastByCommands = false;
+        status = (restore != null ? "Undoing 0 / " : "Updating 0 / ") + total + "…";
         server.execute(run::next);
         return null;
     }
 
+    /**
+     * By commands: reads each target fresh (skipping any that changed since the list was made),
+     * sends the writes, then reads each back. Each keeps its countdown unless priming (sets it
+     * to 0) or undoing a prime (puts it back). {@code restore}: undoing, the data to put back by
+     * key. Null means started; otherwise why not.
+     */
+    private static String commandStart(List<SpawnerIndex.Entry> targets, SpawnerSpec edited, Changes changes,
+                                       java.util.Map<String, Nbt.Compound> restore, boolean prime) {
+        if (busy() || CommandQueue.busy() || ChestIndex.busy || SpawnerIndex.busy || ChestWorldBatch.busy())
+            return "Wait for the current operation to finish.";
+        if (targets.isEmpty()) return "No spawners selected.";
+        if (restore == null && !prime && !edited.problems().isEmpty()) return "Fix the spawner settings before applying.";
+        boolean restoreDelay = restore != null && lastPrimed;
+        Object connection = Minecraft.getInstance().getConnection();
+        var style = new io.github.tjhgibbs.stacksmith.core.command.Commands.Style(Session.briefCommands, Session.target);
+        List<Undo> made = new java.util.ArrayList<>();
+        SpawnerSpec wanted = edited.copy();
+        CommandRun.Job<SpawnerIndex.Entry> job = new CommandRun.Job<>() {
+            @Override public net.minecraft.core.BlockPos pos(SpawnerIndex.Entry t) { return t.pos(); }
+            @Override public String dimension(SpawnerIndex.Entry t) { return t.dimension(); }
+            @Override public boolean present(net.minecraft.world.level.block.entity.BlockEntity be) { return be instanceof SpawnerBlockEntity; }
+
+            @Override public CommandRun.Plan plan(SpawnerIndex.Entry t, Nbt.Compound fresh) {
+                if (!fingerprint(fresh).equals(fingerprint(t.raw()))) {
+                    SpawnerIndex.recordUpdated(t, fresh);
+                    return new CommandRun.Skip(restore != null ? "Changed since the update, so left alone" : "Changed since the last scan, so left alone");
+                }
+                if (prime) {
+                    if (fresh.getLong("Delay", -1) == 0) return new CommandRun.Already();
+                    // It may fire before it is read back, restarting its countdown and picking its next
+                    // mob: only check that its setup didn't move.
+                    SpawnerSpec setup = SpawnerSpec.fromTag(fresh);
+                    return new CommandRun.Write(List.of("data modify block " + t.where() + " Delay set value 0s"),
+                            after -> SpawnerSpec.fromTag(after).sameAs(setup));
+                }
+                SpawnerSpec now = SpawnerSpec.fromTag(fresh);
+                SpawnerSpec out;
+                if (restore != null) {
+                    out = SpawnerSpec.fromTag(restore.get(t.key()));
+                    if (!restoreDelay) out.set(SpawnerSpec.Setting.DELAY, now.get(SpawnerSpec.Setting.DELAY));
+                } else {
+                    out = preview(now, wanted, changes);
+                    String invalid = conflict(out);
+                    if (invalid != null) return new CommandRun.Skip(invalid);
+                }
+                List<String> steps = io.github.tjhgibbs.stacksmith.core.command.Commands.setSpawnerInSteps(out, t.where(), style,
+                        io.github.tjhgibbs.stacksmith.core.command.Commands.CHAT_LIMIT);
+                if (steps == null) return new CommandRun.Skip("A value in it is too long to send from chat");
+                return new CommandRun.Write(steps, after -> SpawnerSpec.fromTag(after).sameAs(out));
+            }
+
+            @Override public void missing(SpawnerIndex.Entry t) { SpawnerIndex.recordMissing(t); }
+            @Override public void skipped(SpawnerIndex.Entry t, String reason) { skipped++; problems.add(new Problem(t, reason)); }
+            @Override public void failed(SpawnerIndex.Entry t, String reason) { failed++; problems.add(new Problem(t, reason)); }
+            @Override public void already(SpawnerIndex.Entry t) { completed++; }
+
+            @Override public void written(SpawnerIndex.Entry t, Nbt.Compound before, Nbt.Compound after) {
+                completed++;
+                made.add(new Undo(new SpawnerIndex.Entry(t.dimension(), t.pos(), SpawnerSpec.fromTag(after), after.copy()), before.copy()));
+                SpawnerIndex.recordUpdated(t, after);
+            }
+
+            @Override public void finished(boolean stopped) {
+                lastChanges = restore != null ? List.of() : List.copyOf(made);
+                lastPrimed = prime;
+                lastChangesWorld = connection;
+                busy = false;
+                status = (stopped ? "Stopped · " : "Finished · ") + completed + " updated · " + skipped + " skipped · " + failed + " failed";
+            }
+        };
+        completed = skipped = failed = 0; failure = null;
+        problems.clear();
+        total = targets.size();
+        String why = CommandRun.start(job, targets);
+        if (why != null) return why;
+        busy = true;
+        lastByCommands = true;
+        remoteUndo = false;
+        status = CommandRun.status();
+        return null;
+    }
+
+    /** How far the running update is, 0 to 1. */
+    public static float progress() {
+        if (lastByCommands && busy) return CommandRun.progress();
+        return (completed + skipped + failed) / (float) Math.max(1, total);
+    }
+
     /** Stops future writes; changes already completed remain. */
     public static void cancel() {
+        if (lastByCommands && busy) { CommandRun.cancel(); return; }
         // Keep listening after asking the server to stop: its final reply carries the true counts,
         // the skipped targets and a fresh snapshot (whose revision the next edit must quote).
         if (remote) { ServerHooks.request(Nbt.compound().put("op", "cancel"), ignored -> {}); status = "Stopping…"; return; }
@@ -175,6 +356,11 @@ public final class SpawnerWorldBatch {
         ServerLevel heldLevel;
         ChunkPos heldChunk;
         boolean finished;
+        /** Undoing: the data to put back, by target key. Null for an ordinary update. */
+        java.util.Map<String, Nbt.Compound> restore;
+        /** Setting every countdown to 0 (and, undoing that, putting the countdowns back). */
+        boolean prime, restoreDelay;
+        final List<Undo> changes = new java.util.ArrayList<>();
 
         Run(MinecraftServer server, List<SpawnerIndex.Entry> targets, SpawnerSpec edited, Pool pool,
             java.util.EnumSet<SpawnerSpec.Setting> settings, java.util.UUID traveller) {
@@ -186,15 +372,14 @@ public final class SpawnerWorldBatch {
         void fail(SpawnerIndex.Entry target, String reason) { failed++; problems.add(new Problem(target, reason)); }
 
         boolean active() {
-            return !cancelled && !finished && current == this
-                    && Minecraft.getInstance().getSingleplayerServer() == server;
+            return !cancelled && !finished && current == this && Backend.host() == server;
         }
 
         void next() {
             if (!active()) { finish(); return; }
             if (index >= targets.size()) { visitNext(); return; }
             SpawnerIndex.Entry target = targets.get(index++);
-            status = "Updating " + (index - 1) + " / " + total + " copies…";
+            status = (restore != null ? "Undoing " : "Updating ") + (index - 1) + " / " + total + "…";
             ServerLevel level = server.getLevel(ResourceKey.create(Registries.DIMENSION, Identifier.parse(target.dimension())));
             if (level == null) { skip(target, "Dimension isn't loaded"); later(); return; }
             ChunkPos chunk = new ChunkPos(target.pos().getX() >> 4, target.pos().getZ() >> 4);
@@ -238,11 +423,21 @@ public final class SpawnerWorldBatch {
                 // Compare all raw fields, including unfamiliar/modded data, except location and
                 // the live countdown. A changed target is skipped, even if it still looks similar.
                 if (!fingerprint(fresh).equals(fingerprint(target.raw()))) {
-                    skip(target, "Changed since the last scan, so left alone");
+                    skip(target, restore != null ? "Changed since the update, so left alone" : "Changed since the last scan, so left alone");
                     SpawnerIndex.recordUpdated(target, fresh);
                     return;
                 }
                 Nbt.Compound out = fresh.copy();
+                if (restore != null) {
+                    // Everything as it was before the update, except the countdown, which is the spawner's own.
+                    out = restore.get(target.key()).copy();
+                    if (restoreDelay) { /* the countdown is what was changed: put it back too */ }
+                    else if (fresh.get("Delay") != null) out.put("Delay", fresh.get("Delay").copy()); else out.remove("Delay");
+                }
+                if (prime) {
+                    if (fresh.getLong("Delay", -1) == 0) { completed++; return; }
+                    out.put("Delay", Nbt.s(0));
+                }
                 Nbt.Compound replacement = edited.toTag();
                 // Written explicitly, defaults included: toTag leaves defaults out, but the game saves
                 // every setting, so a removed key would never read back as the change being kept.
@@ -251,14 +446,16 @@ public final class SpawnerWorldBatch {
                     copyKey(replacement, out, "SpawnData");
                     copyKey(replacement, out, "SpawnPotentials");
                 }
-                String invalid = conflict(SpawnerSpec.fromTag(out));
+                String invalid = restore != null || prime ? null : conflict(SpawnerSpec.fromTag(out));
                 if (invalid != null) { skip(target, invalid); return; }
                 be.loadWithComponents(TagValueInput.create(ProblemReporter.DISCARDING, level.registryAccess(), McNbt.toGame(out)));
                 be.setChanged();
                 level.sendBlockUpdated(target.pos(), be.getBlockState(), be.getBlockState(), 3);
                 Nbt.Compound after = McNbt.fromGame(be.saveWithoutMetadata(level.registryAccess()));
-                if (fingerprint(after).equals(fingerprint(out)) && java.util.Objects.equals(after.get("Delay"), fresh.get("Delay"))) {
+                if (fingerprint(after).equals(fingerprint(out))
+                        && after.getLong("Delay", -1) == (prime || restoreDelay ? out : fresh).getLong("Delay", -1)) {
                     completed++;
+                    changes.add(new Undo(new SpawnerIndex.Entry(target.dimension(), target.pos(), SpawnerSpec.fromTag(after), after.copy()), fresh.copy()));
                     SpawnerIndex.recordUpdated(target, after);
                 }
                 else fail(target, "The game didn't keep the change");
@@ -326,6 +523,9 @@ public final class SpawnerWorldBatch {
             farIndex = far.size();
             returnHome();
             if (current == this) {
+                lastChanges = restore != null ? List.of() : List.copyOf(changes);
+                lastPrimed = prime;
+                lastChangesWorld = server;
                 busy = false;
                 status = (cancelled ? "Stopped · " : "Finished · ") + completed + " updated · " + skipped + " skipped · " + failed + " failed";
                 current = null;

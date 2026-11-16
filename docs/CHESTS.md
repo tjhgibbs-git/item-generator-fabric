@@ -1,5 +1,20 @@
 # Container editing and laptop handoff
 
+**Later on 2026-11-16:** container Edit all and Edit item now also work without a world of yours
+to run (any server, as op): `ChestWorldBatch` falls back to `CommandRun`, which re-reads each
+container, builds its new contents in command storage and merges them in (removing dropped keys
+such as `LootTable` first; the block is never replaced, so nothing drops), then reads it back.
+Undo is kept client-side until disconnect. The loaded-chunk list is of one dimension and is read
+again after travelling. Both World lists have the distance filter.
+
+**2026-11-16:** the world list moved to the World tab (`ContainerWorldScreen`): grouped by identical
+contents or by item, auto-scanned, with teleport, travelling Edit, Edit all, and "Edit item" across
+every container holding it. Bulk writes go through `ChestApplyScreen` (review, tick boxes, undo) and
+`ChestWorldBatch` (integrated server only: revalidated against the scan, read back, never generates
+terrain; targets next to unexplored terrain are skipped). The library screen now only holds
+Starred. The editor has the same scope strip as the spawner editor and **Drop loot table**. The
+notes below about "Find in world → Index world" and the flat results list describe the old screen.
+
 The Chests tab is a parent editor for 27-slot physical containers: normal/trapped
 chests, barrels, and all shulker colours. A double chest is indexed as two halves;
 edit each half separately. Select a slot, then **Edit item** for the existing full

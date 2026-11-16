@@ -26,7 +26,7 @@ public abstract class StacksmithScreen extends Screen {
         MOB("Mob", "Mobs: type, name, gear, behaviour, stats and effects; summon them or put them in a spawner"),
         CHEST("Chests", "Create containers, edit their slots, or find them in your world"),
         ITEM("Item", "Items: name, lore, enchantments and every other component"),
-        WORLD("World", "Browse saved spawners in this world, independently of your current design");
+        WORLD("World", "Every spawner and container in this world: find them, go to them, edit one or all alike");
 
         final String label, tip;
 
@@ -36,19 +36,26 @@ public abstract class StacksmithScreen extends Screen {
         }
     }
 
+    /** Why the World tab is greyed out: it lists what is in the world you're in. */
+    static final String WORLD_NEEDED = "Join a world to list its spawners and containers.";
+
     /** The tab the key reopens. */
     static Tab lastTab = Tab.SPAWNER;
 
+    /** The World tab's two lists (spawners, containers). */
+    interface WorldList {
+    }
+
     static Screen open(Tab tab, Screen parent) {
         if (tab == Tab.WORLD && !SpawnerIndex.available()) return new SpawnerEditorScreen(parent);
-        // An editor opened from the World list returns there; other tabs don't stack on it.
-        if (tab != Tab.WORLD && parent instanceof SpawnerWorldScreen list) parent = list.parent;
+        // An editor opened from a World list returns there; other tabs don't stack on it.
+        if (parent instanceof WorldList) parent = ((StacksmithScreen) parent).parent;
         return switch (tab) {
             case CHEST -> new ChestEditorScreen(parent);
             case ITEM -> new ItemEditorScreen(parent);
             case MOB -> new MobEditorScreen(parent);
             case SPAWNER -> new SpawnerEditorScreen(parent);
-            case WORLD -> parent instanceof SpawnerWorldScreen list ? list : new SpawnerWorldScreen(parent);
+            case WORLD -> SpawnerWorldScreen.containers ? new ContainerWorldScreen(parent) : new SpawnerWorldScreen(parent);
         };
     }
 
@@ -78,9 +85,9 @@ public abstract class StacksmithScreen extends Screen {
                 for (Tab t : Tab.values()) {
                     int w = font.width(t.label) + 16;
                     Chip tabChip = addRenderableWidget(Chip.of(t.label, w, 14, () -> {
-                        if (t != current || t == Tab.WORLD && this instanceof SpawnerBatchScreen browser && browser.filtersCopies())
+                        if (t != current)
                             minecraft.setScreenAndShow(open(t, parent));
-                    }).selected(() -> t == current).tip(t == Tab.WORLD && !SpawnerIndex.available() ? ServerHooks.REQUIRED : t.tip).at(x, 5));
+                    }).selected(() -> t == current).tip(t == Tab.WORLD && !SpawnerIndex.available() ? WORLD_NEEDED : t.tip).at(x, 5));
                     if (t == Tab.WORLD) { worldTabs.add(tabChip); tabChip.active = SpawnerIndex.available(); }
                     x += w + 2;
                 }
@@ -108,6 +115,20 @@ public abstract class StacksmithScreen extends Screen {
         }
     }
 
+    /** The World tab's Spawners | Containers switch, at the right of the tab row. */
+    protected void worldSwitch(boolean containers) {
+        SpawnerWorldScreen.containers = containers;
+        int cw = 64, sw = 56, x = width - PAD - cw - 2 - sw;
+        if (x < tabsRight + 4) return; // too narrow: the Chests tab's Find in world… still gets there
+        Chip spawners = addRenderableWidget(Chip.of("Spawners", sw, 14, () -> {
+            if (containers) minecraft.setScreenAndShow(new SpawnerWorldScreen(parent));
+        }).selected(() -> !containers).at(x, 5).tip(SpawnerIndex.available() ? "Every spawner in this world, grouped by kind" : WORLD_NEEDED));
+        spawners.active = SpawnerIndex.available();
+        addRenderableWidget(Chip.of("Containers", cw, 14, () -> {
+            if (!containers) minecraft.setScreenAndShow(new ContainerWorldScreen(parent));
+        }).selected(() -> containers).at(x + sw + 2, 5).tip("Every chest, barrel and shulker box, grouped by contents"));
+    }
+
     /** A compact navigation menu when all tabs and editor actions would collide. */
     private static final class TabPicker extends StacksmithScreen {
         private final Tab current;
@@ -120,7 +141,7 @@ public abstract class StacksmithScreen extends Screen {
                 Chip tabChip = addRenderableWidget(Chip.of(tab.label, w, 22, () -> {
                     if (tab == current) onClose();
                     else minecraft.setScreenAndShow(open(tab, ((StacksmithScreen) parent).parent));
-                }).at(x, 38 + i * 27).selected(() -> tab == current).tip(tab == Tab.WORLD && !SpawnerIndex.available() ? ServerHooks.REQUIRED : tab.tip));
+                }).at(x, 38 + i * 27).selected(() -> tab == current).tip(tab == Tab.WORLD && !SpawnerIndex.available() ? WORLD_NEEDED : tab.tip));
                 if (tab == Tab.WORLD) { worldTabs.add(tabChip); tabChip.active = SpawnerIndex.available(); }
             }
             addRenderableWidget(Chip.of("Back", w, 18, this::onClose).at(x, height - 30));
@@ -296,7 +317,7 @@ public abstract class StacksmithScreen extends Screen {
         super.tick();
         worldTabs.forEach(chip -> {
             boolean available = SpawnerIndex.available();
-            if (chip.active != available) { chip.active = available; chip.tip(available ? Tab.WORLD.tip : ServerHooks.REQUIRED); }
+            if (chip.active != available) { chip.active = available; chip.tip(available ? Tab.WORLD.tip : WORLD_NEEDED); }
         });
         if (focusNext != null) {
             if (children().contains(focusNext)) {

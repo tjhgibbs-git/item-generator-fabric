@@ -39,6 +39,46 @@ public final class ServerBatch {
 
     private enum Pool { ALWAYS, IF_DIFFERENT, NEVER }
 
+    /** A spawner the last update changed: as it is now, and its data before. */
+    private record Undo(ServerIndex.Entry after, Nbt.Compound before) {}
+    private volatile List<Undo> lastChanges = List.of();
+    private volatile boolean lastPrimed;
+
+    /** Sets the countdown of each target to 0, so it spawns as soon as a player is in range. Nothing else changes. */
+    public String prime(List<ServerIndex.Entry> targets) {
+        if (busy) return "Wait for the current operation to finish.";
+        if (!allowed.getAsBoolean()) return "Session is no longer authorized.";
+        if (targets.isEmpty()) return "No spawners selected.";
+        completed = skipped = failed = 0;
+        problems.clear(); total = targets.size();
+        Run run = new Run(server, List.copyOf(targets), new SpawnerSpec(), Pool.NEVER, java.util.EnumSet.noneOf(SpawnerSpec.Setting.class));
+        run.prime = true;
+        current = run; busy = true; status = "Priming spawners…";
+        server.execute(run::next);
+        return null;
+    }
+
+    public boolean canUndo() { return !busy && !lastChanges.isEmpty(); }
+
+    /** Puts back what the last update changed, wherever the spawner is still as that update left it. */
+    public String undo() {
+        if (busy) return "Wait for the current operation to finish.";
+        if (!allowed.getAsBoolean()) return "Session is no longer authorized.";
+        List<Undo> changes = lastChanges;
+        if (changes.isEmpty()) return "Nothing to undo.";
+        java.util.Map<String, Nbt.Compound> restore = new java.util.HashMap<>();
+        List<ServerIndex.Entry> targets = new java.util.ArrayList<>();
+        for (Undo u : changes) { restore.put(u.after().key(), u.before()); targets.add(u.after()); }
+        completed = skipped = failed = 0;
+        problems.clear(); total = targets.size();
+        Run run = new Run(server, List.copyOf(targets), new SpawnerSpec(), Pool.NEVER, java.util.EnumSet.noneOf(SpawnerSpec.Setting.class));
+        run.restore = restore;
+        run.restoreDelay = lastPrimed;
+        current = run; busy = true; status = "Undoing…";
+        server.execute(run::next);
+        return null;
+    }
+
     public boolean busy() { return busy; }
     public String status() { return status; }
     public String startChanges(List<ServerIndex.Entry> targets, SpawnerSpec base, SpawnerSpec edited) {
@@ -99,6 +139,11 @@ public final class ServerBatch {
         ServerLevel heldLevel;
         ChunkPos heldChunk;
         boolean finished;
+        /** Undoing: the data to put back, by target key. Null for an ordinary update. */
+        java.util.Map<String, Nbt.Compound> restore;
+        /** Setting every countdown to 0 (and, undoing that, putting the countdowns back). */
+        boolean prime, restoreDelay;
+        final List<Undo> changes = new java.util.ArrayList<>();
 
         Run(MinecraftServer server, List<ServerIndex.Entry> targets, SpawnerSpec edited, Pool pool,
             java.util.EnumSet<SpawnerSpec.Setting> settings) {
@@ -162,11 +207,21 @@ public final class ServerBatch {
                 // Compare all raw fields, including unfamiliar/modded data, except location and
                 // the live countdown. A changed target is skipped, even if it still looks similar.
                 if (!fingerprint(fresh).equals(fingerprint(target.raw()))) {
-                    skip(target, "Changed since the last scan, so left alone");
+                    skip(target, restore != null ? "Changed since the update, so left alone" : "Changed since the last scan, so left alone");
                     ServerBatch.this.index.recordUpdated(target, fresh);
                     return;
                 }
                 Nbt.Compound out = fresh.copy();
+                if (restore != null) {
+                    // Everything as it was before the update, except the countdown, which is the spawner's own.
+                    out = restore.get(target.key()).copy();
+                    if (restoreDelay) { /* the countdown is what was changed: put it back too */ }
+                    else if (fresh.get("Delay") != null) out.put("Delay", fresh.get("Delay").copy()); else out.remove("Delay");
+                }
+                if (prime) {
+                    if (fresh.getLong("Delay", -1) == 0) { completed++; return; }
+                    out.put("Delay", Nbt.s(0));
+                }
                 Nbt.Compound replacement = edited.toTag();
                 // Written explicitly, defaults included: toTag leaves defaults out, but the game saves
                 // every setting, so a removed key would never read back as the change being kept.
@@ -175,14 +230,16 @@ public final class ServerBatch {
                     copyKey(replacement, out, "SpawnData");
                     copyKey(replacement, out, "SpawnPotentials");
                 }
-                String invalid = conflict(SpawnerSpec.fromTag(out));
+                String invalid = restore != null || prime ? null : conflict(SpawnerSpec.fromTag(out));
                 if (invalid != null) { skip(target, invalid); return; }
                 be.loadWithComponents(TagValueInput.create(ProblemReporter.DISCARDING, level.registryAccess(), McNbt.toGame(out)));
                 be.setChanged();
                 level.sendBlockUpdated(target.pos(), be.getBlockState(), be.getBlockState(), 3);
                 Nbt.Compound after = McNbt.fromGame(be.saveWithoutMetadata(level.registryAccess()));
-                if (fingerprint(after).equals(fingerprint(out)) && java.util.Objects.equals(after.get("Delay"), fresh.get("Delay"))) {
+                if (fingerprint(after).equals(fingerprint(out))
+                        && after.getLong("Delay", -1) == (prime || restoreDelay ? out : fresh).getLong("Delay", -1)) {
                     completed++;
+                    changes.add(new Undo(new ServerIndex.Entry(target.dimension(), target.pos(), SpawnerSpec.fromTag(after), after.copy()), fresh.copy()));
                     ServerBatch.this.index.recordUpdated(target, after);
                 }
                 else fail(target, "The game didn't keep the change");
@@ -207,6 +264,9 @@ public final class ServerBatch {
             finished = true;
             release();
             if (current == this) {
+                // One level of undo: an undo can't itself be undone.
+                lastChanges = restore != null ? List.of() : List.copyOf(changes);
+                lastPrimed = prime;
                 busy = false;
                 status = (cancelled ? "Stopped · " : "Finished · ") + completed + " updated · " + skipped + " skipped · " + failed + " failed";
                 current = null;

@@ -53,7 +53,9 @@ import java.util.Map;
  * turns itself into the spawner when placed (always active, no redstone), or the command to copy.
  */
 public final class SpawnerEditorScreen extends StacksmithScreen {
-    private static final int TOP = 24, FOOTER = 26;
+    /** The scope bar under the tabs: says what this editor is pointed at, in the main button's colour. */
+    private static final int BAR_Y = 22, BAR_H = 13;
+    private static final int TOP = BAR_Y + BAR_H + 4, FOOTER = 26;
     private static final long DEBOUNCE_MS = 150;
     private static double leftScroll, midScroll;
 
@@ -86,6 +88,55 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
 
     /** When editing a group of world spawners together (World tab's Edit all), or null. */
     private final SpawnerApplyScreen.Targets group;
+
+    /** What the editor is pointed at; everything that says or colours the scope goes by this. */
+    private enum Scope {
+        NEW(0xFF1E3550, 0xFF5C8DBF, 0xFF2E5E8C),
+        COPY(0xFF33294A, 0xFFB48CFF, 0xFF5B4A8C),
+        ONE(0xFF1F4A2C, 0xFF7BD88F, 0xFF2F7D46),
+        ALL(0xFF4A3A14, 0xFFFFC14D, 0xFF8A6A1E);
+
+        final int bar, stripe, button;
+
+        Scope(int bar, int stripe, int button) {
+            this.bar = bar;
+            this.stripe = stripe;
+            this.button = button;
+        }
+    }
+
+    private Scope scope() {
+        return group != null ? Scope.ALL : Session.spawnerPos != null ? Scope.ONE
+                : Session.spawnerCopyOf != null ? Scope.COPY : Scope.NEW;
+    }
+
+    /** Linked: how many other spawners of this kind the world index knows (-1: not known). */
+    private int others = -1;
+    private int othersVersion = -1;
+    private Chip alsoOthers, asCopy;
+
+    /** What the others are compared with: the block as saved, or as loaded once it has been saved over. */
+    private SpawnerSpec othersBase() {
+        return unsaved() || Session.spawnerOriginal == null ? Session.spawnerSaved : Session.spawnerOriginal;
+    }
+
+    private void countOthers() {
+        othersVersion = SpawnerIndex.version;
+        others = -1;
+        if (Session.spawnerPos != null && Session.spawnerSaved != null && SpawnerIndex.current() && SpawnerIndex.indexed) {
+            String me = SpawnerIndex.key(Session.spawnerDimension, Session.spawnerPos);
+            others = (int) SpawnerIndex.sameKind(othersBase()).stream().filter(e -> !e.key().equals(me)).count();
+        }
+        if (alsoOthers != null) {
+            alsoOthers.setMessage(Component.literal(others > 0 ? "Also change the other " + others + "…"
+                    : others == 0 ? "No others like it" : "Also change others like it…"));
+            alsoOthers.active = others != 0 && Session.spawnerSaved != null;
+            alsoOthers.tip(others == 0 ? "No other spawner in this world spawns the same mobs with the same gear and data."
+                    : "Review giving what you changed here to the other spawners with the same mobs, gear and data"
+                    + (SpawnerIndex.clientBackend() ? " in the chunks loaded around you" : " anywhere in this world")
+                    + ". You choose which ones; each keeps the settings you didn't change.");
+        }
+    }
 
     public SpawnerEditorScreen(Screen parent) {
         this(parent, null);
@@ -163,21 +214,12 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         SuggestBox.closeAll();
         savedLabel = "Recent…";
         savedTip = "Spawners you've saved, placed or taken out, and the ones you starred. Type to search, Enter to load.";
+        // Editing all of a kind: no Import or New, which would quietly swap what "all" means.
         header(Tab.SPAWNER, "Look at a spawner, or paste a /setblock, /summon or spawner /give",
-                () -> minecraft.setScreenAndShow(new ImportScreen(this, null)),
-                () -> minecraft.setScreenAndShow(new SpawnerLibraryScreen(this, spawner, data -> {
-                    // Stays tied to the block it was editing, so Overwrite puts the loaded one there.
-                    SpawnerSpec loaded = SpawnerSpec.fromTag(data);
-                    WorldSpawner.link(loaded, null);
-                    if (group != null) Session.spawnerOriginal = group.base().copy();
-                    // Editing a group: the loaded spawner is what they all become.
-                    SpawnerEditorScreen fresh = new SpawnerEditorScreen(parent, group);
-                    minecraft.setScreenAndShow(fresh);
-                    fresh.toast(Component.literal("Loaded " + SpawnerLog.title(loaded)
-                            + " as a reusable template"), true);
-                })),
+                group != null ? null : () -> minecraft.setScreenAndShow(new ImportScreen(this, null)),
+                () -> minecraft.setScreenAndShow(new SpawnerLibraryScreen(this, spawner, data -> loaded(SpawnerSpec.fromTag(data)))),
                 "Start a blank spawner, not tied to any block",
-                () -> {
+                group != null ? null : () -> {
                     WorldSpawner.link(new SpawnerSpec(), null);
                     minecraft.setScreenAndShow(new SpawnerEditorScreen(parent));
                 });
@@ -196,7 +238,52 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         buildMiddle();
         buildRight();
         buildFooter();
+        if (Session.spawnerPos != null && SpawnerIndex.available() && !SpawnerIndex.busy
+                && !(SpawnerIndex.current() && SpawnerIndex.indexed)) {
+            SpawnerIndex.ensure(() -> {}); // to say how many others like it there are
+        }
+        countOthers();
         changed();
+    }
+
+    /** A spawner picked in Recent…: where it goes depends on what the editor is pointed at. */
+    private void loaded(SpawnerSpec loaded) {
+        String what = SpawnerLog.title(loaded);
+        if (group != null) {
+            // Editing a group: the loaded spawner is what they all become, once applied.
+            WorldSpawner.link(loaded, null);
+            Session.spawnerOriginal = group.base().copy();
+            open(new SpawnerEditorScreen(parent, group), "Loaded " + what + ": Apply gives it to all " + group.entries().size());
+        } else if (Session.spawnerPos != null) {
+            BlockPos pos = Session.spawnerPos;
+            minecraft.setScreenAndShow(new ChoiceScreen(this, "Loaded " + what, "Where should it go?", List.of(
+                    new ChoiceScreen.Choice("Into this spawner (" + at(pos) + ")",
+                            "Replaces what you're editing. Nothing is written until you Save this spawner.", Scope.ONE.button, () -> {
+                        WorldSpawner.link(loaded, pos);
+                        open(new SpawnerEditorScreen(parent), "Loaded " + what + " into the spawner at " + at(pos) + ": not saved yet");
+                    }),
+                    new ChoiceScreen.Choice("Start a new spawner from it",
+                            "Leaves the spawner at " + at(pos) + " alone. You place the new one where you look.", Scope.NEW.button, () -> {
+                        WorldSpawner.link(loaded, null);
+                        open(new SpawnerEditorScreen(parent), "Loaded " + what + " as a new spawner");
+                    }))));
+        } else {
+            WorldSpawner.link(loaded, null);
+            open(new SpawnerEditorScreen(parent), "Loaded " + what + " as a new spawner");
+        }
+    }
+
+    private void open(SpawnerEditorScreen fresh, String message) {
+        minecraft.setScreenAndShow(fresh);
+        fresh.toast(Component.literal(message), true);
+    }
+
+    /** Stops editing the linked spawner and keeps what's here as a new one, to place somewhere else. */
+    private void useAsCopy() {
+        BlockPos from = Session.spawnerPos;
+        WorldSpawner.link(spawner, null);
+        Session.spawnerCopyOf = from;
+        open(new SpawnerEditorScreen(parent), "Now a copy: the spawner at " + at(from) + " is left as it is");
     }
 
     private static String mobLabel(EntitySpec e) {
@@ -263,7 +350,6 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         mid.add(new SettingsCard("Where", 0xFF7BD88F, "When it is active, and how far out mobs appear.",
                 new Field(SpawnerSpec.Setting.PLAYER_RANGE, "Runs with a player within", "blocks", "Only spawns while a player is this close. Default 16."),
                 new Field(SpawnerSpec.Setting.SPAWN_RANGE, "Mobs appear within", "blocks", "How far from the spawner mobs are placed. Default 4.")));
-        if (group == null) mid.add(new BatchCard());
         addPaneWidgets(mid);
         mid.layout();
         mid.scroll(midScroll);
@@ -274,10 +360,14 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         int y = buttonsTop();
         String save = group != null ? "Apply to all " + group.entries().size() + "…"
                 : I18n.get(Session.spawnerPos != null ? "stacksmith.button.save_spawner" : "stacksmith.button.place");
+        if (Session.spawnerPos != null && group == null) {
+            asCopy = addRenderableWidget(Chip.of("Use as a new copy", 108, BAR_H - 2, this::useAsCopy).at(width - PAD - 109, BAR_Y + 1)
+                    .tip("Stop editing this spawner and keep what's here as a new one to place somewhere else. This spawner stays as it is in the world."));
+        }
         placeHere = addRenderableWidget(new Chip(Component.literal(save), w, SAVE_H, in -> {
                     if (group != null) minecraft.setScreenAndShow(new SpawnerApplyScreen(this, group, spawner));
                     else placeHere();
-                }).primary(group != null || Session.spawnerPos != null ? 0xFF2F7D46 : 0xFF2E5E8C).at(x, y));
+                }).primary(scope().button).at(x, y));
         y += SAVE_H + SAVE_STATUS;
         getSpawner = addRenderableWidget(Button.builder(Component.translatable("stacksmith.button.get_spawner"), b -> giveSpawner())
                 .bounds(x, y, w, 20).build());
@@ -391,13 +481,21 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         // Leaves room for the length ("157/256") between the box and the buttons.
         int countW = font.width("0000/256") + 8;
         commandBox = addRenderableWidget(new EditBox(font, PAD, y + 2,
-                width - PAD * 2 - 64 - (group == null ? 104 : 0) - countW, 16, Component.literal("Command")));
+                width - PAD * 2 - 64 - (linkedOne() ? 154 : 0) - countW, 16, Component.literal("Command")));
         commandBox.setMaxLength(Commands.COMMAND_BLOCK_LIMIT);
         commandBox.setEditable(false);
-        if (group == null) addRenderableWidget(Chip.of("Find copies…", 100, 20,
-                () -> minecraft.setScreenAndShow(new SpawnerBatchScreen(this, true)))
-                .at(width - PAD - 164, y).tip("Discover spawners across the world, inspect copies and rebalance them"));
+        alsoOthers = null;
+        if (linkedOne()) {
+            alsoOthers = addRenderableWidget(Chip.of("", 150, 20, () -> minecraft.setScreenAndShow(new SpawnerApplyScreen(this,
+                    othersBase(), Session.spawnerSaved, spawner, Session.spawnerPos, Session.spawnerDimension)))
+                    .at(width - PAD - 214, y));
+        }
         addRenderableWidget(Button.builder(Component.translatable("gui.done"), b -> onClose()).bounds(width - PAD - 60, y, 60, 20).build());
+    }
+
+    /** Editing one spawner in the world (not a group, not a new one). */
+    private boolean linkedOne() {
+        return group == null && Session.spawnerPos != null;
     }
 
     private Commands.Style style() {
@@ -447,7 +545,10 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         SpawnerSpec original = Session.spawnerOriginal.copy();
         int entry = Session.spawnerEntry;
         WorldSpawner.link(original, Session.spawnerPos); // same block: keeps the original
-        if (group != null) Session.spawnerOriginal = group.base().copy();
+        if (group != null) {
+            Session.spawnerOriginal = group.base().copy();
+            group.unify.clear();
+        }
         Session.spawnerEntry = entry;
         SpawnerEditorScreen fresh = new SpawnerEditorScreen(parent, group);
         minecraft.setScreenAndShow(fresh);
@@ -485,7 +586,7 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         Session.spawnerPos = p.immutable();
         Session.spawnerSaved = spawner.copy();
         SpawnerLibrary.record(spawner, saved ? "Saved" : "Placed", p);
-        // The button now saves to this block, and nearby copies are looked for as saved now.
+        // The button now saves to this block.
         rebuild();
         toast(Component.translatable(saved ? "stacksmith.msg.saved_spawner" : "stacksmith.msg.placed_spawner", at(p)), true);
     }
@@ -510,6 +611,9 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         if (unstarArmedUntil != 0 && System.currentTimeMillis() >= unstarArmedUntil) {
             unstarArmedUntil = 0;
             updateStar();
+        }
+        if (othersVersion != SpawnerIndex.version) {
+            countOthers();
         }
         if (dirty && System.currentTimeMillis() - changedAt >= DEBOUNCE_MS) {
             dirty = false;
@@ -545,14 +649,14 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         // A sample position as long as real ones get, to see whether it needs steps or can't be sent.
         List<String> steps = Commands.setSpawnerInSteps(spawner, "-30000000 -64 -30000000", style(), Commands.CHAT_LIMIT);
         placeHere.active = valid && (group != null
-                ? SpawnerWorldBatch.available() && Delivery.canUse("setblock") && !SpawnerWorldBatch.changes(group.base(), spawner).isEmpty() : canPlace(steps));
+                ? SpawnerWorldBatch.available() && Delivery.canUse("setblock") && !group.changes(spawner).isEmpty() : canPlace(steps));
         reset.active = Session.spawnerOriginal != null && !Session.spawnerOriginal.toTag().equals(spawner.toTag());
         updateStar();
         copySetblock.active = valid;
         getSpawner.setTooltip(Tooltip.create(Component.translatable(creative ? "stacksmith.tooltip.get_spawner" : "stacksmith.tooltip.get_creative")));
         getCommandBlock.setTooltip(Tooltip.create(Component.translatable(creative ? "stacksmith.tooltip.get_command_block" : "stacksmith.tooltip.get_creative")));
         placeHere.setTooltip(Tooltip.create(group != null ? Component.literal("Review what changes, then write it to all "
-                + group.entries().size() + " spawners. Anything you don't change stays as each one has it.")
+                + group.entries().size() + " spawners (you can untick any of them there). Anything you don't change stays as each one has it.")
                 : !op ? Component.translatable("stacksmith.tooltip.place_no_permission")
                 : steps == null ? Component.translatable("stacksmith.tooltip.place_too_long")
                 : Session.spawnerPos != null ? Component.translatable("stacksmith.tooltip.save_spawner", at(Session.spawnerPos))
@@ -570,9 +674,8 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         panel(g, midX() - 2, top, midW() + 4, bottom - top);
         panel(g, rightX() - 2, top, rightW() + 4, bottom - top);
         label(g, spawner.entries().size() > 1 ? "Spawns (picks one)" : "Spawns", PAD + 1, TOP + 2);
-        label(g, font.plainSubstrByWidth(group != null ? "Editing all " + group.entries().size() + " · " + group.name()
-                : Session.spawnerPos != null ? "Spawner at " + at(Session.spawnerPos) : "New spawner",
-                reset.getX() - midX() - 4), midX() + 1, TOP + 2);
+        label(g, font.plainSubstrByWidth("Spawner", reset.getX() - midX() - 4), midX() + 1, TOP + 2);
+        scopeBar(g);
         int rx = rightX(), rw = rightW();
         if (!nickname.visible) {
             label(g, "Preview", rx + 1, TOP + 2);
@@ -597,21 +700,53 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
         }
         int sy = placeHere.getY() + SAVE_H + 3;
         if (group != null) {
-            var changes = SpawnerWorldBatch.changes(group.base(), spawner);
+            var changes = group.changes(spawner);
             int n = changes.settings().size() + (changes.pool() ? 1 : 0);
-            g.text(font, font.plainSubstrByWidth(n == 0 ? "Nothing changed yet" : "● " + n + (n == 1 ? " change" : " changes") + " to apply",
+            g.text(font, font.plainSubstrByWidth(n == 0 ? "Nothing changed yet" : "● " + n + (n == 1 ? " change" : " changes") + " → all " + group.entries().size(),
                     rw - 4), rx + 2, sy, n == 0 ? Theme.TEXT_DIM : Theme.WARN, false);
         } else if (Session.spawnerPos == null) {
-            g.text(font, font.plainSubstrByWidth("Places a new spawner where you look", rw - 4), rx + 2, sy, Theme.TEXT_DIM, false);
+            g.text(font, font.plainSubstrByWidth("Makes a new spawner", rw - 4), rx + 2, sy, Theme.TEXT_DIM, false);
         } else if (unsaved()) {
-            g.text(font, font.plainSubstrByWidth("● Unsaved changes", rw - 4), rx + 2, sy, Theme.WARN, false);
+            g.text(font, font.plainSubstrByWidth("● Unsaved · only this one", rw - 4), rx + 2, sy, Theme.WARN, false);
         } else {
-            g.text(font, font.plainSubstrByWidth("✔ No unsaved changes", rw - 4), rx + 2, sy, Theme.GOOD, false);
+            g.text(font, font.plainSubstrByWidth("✔ Saved · only this one", rw - 4), rx + 2, sy, Theme.GOOD, false);
         }
         int len = command.length() + 1;
         String count = len + "/" + Commands.CHAT_LIMIT;
         g.text(font, count, commandBox.getX() + commandBox.getWidth() + 4, commandBox.getY() + 4,
                 len <= Commands.CHAT_LIMIT ? Theme.TEXT_DIM : Theme.WARN, false);
+    }
+
+    /** The strip under the tabs: a tag for the scope, then what exactly that is. */
+    private void scopeBar(GuiGraphicsExtractor g) {
+        Scope scope = scope();
+        int x = PAD - 2, w = width - 2 * PAD + 4;
+        g.fill(x, BAR_Y, x + w, BAR_Y + BAR_H, scope.bar);
+        g.fill(x, BAR_Y, x + 3, BAR_Y + BAR_H, scope.stripe);
+        String tag, rest;
+        switch (scope) {
+            case ALL -> {
+                tag = "ALL " + group.entries().size();
+                rest = group.name() + " spawners · what you change goes to every one of them";
+            }
+            case ONE -> {
+                tag = "THIS SPAWNER";
+                rest = spawnerLabel() + " at " + at(Session.spawnerPos)
+                        + (others > 0 ? " · 1 of " + (others + 1) + " like it" : others == 0 ? " · the only one like it" : "");
+            }
+            case COPY -> {
+                tag = "NEW COPY";
+                rest = "of the spawner at " + at(Session.spawnerCopyOf) + " · that one won't change";
+            }
+            default -> {
+                tag = "NEW SPAWNER";
+                rest = "not in the world yet";
+            }
+        }
+        int room = (asCopy != null && scope == Scope.ONE ? asCopy.getX() : x + w) - x - 12;
+        g.text(font, tag, x + 7, BAR_Y + 3, scope.stripe, false);
+        int tx = x + 7 + font.width(tag) + 6;
+        g.text(font, font.plainSubstrByWidth(rest, Math.max(0, room - font.width(tag) - 6)), tx, BAR_Y + 3, 0xFFFFFFFF, false);
     }
 
     @Override
@@ -686,15 +821,36 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
             for (Field f : fields) {
                 EditBox box = body(new EditBox(font, 0, 0, boxW, 14, Component.literal(f.label())));
                 int v = spawner.get(f.setting());
-                box.setValue(f.seconds() ? Time.format(v) : Integer.toString(v));
-                box.setTooltip(Tooltip.create(Component.literal(f.help())));
+                // Editing all: a setting the spawners don't agree on starts empty ("mixed"), so
+                // the usual value isn't mistaken for what every one of them has.
+                java.util.Map<Integer, Long> across = group == null ? java.util.Map.of() : group.values(f.setting());
+                boolean mixed = across.size() > 1;
+                boolean untouched = mixed && !group.unify.contains(f.setting()) && v == group.base().get(f.setting());
+                box.setValue(untouched ? "" : f.seconds() ? Time.format(v) : Integer.toString(v));
+                if (mixed) {
+                    box.setHint(Component.literal("mixed").withStyle(net.minecraft.ChatFormatting.DARK_GRAY));
+                }
+                box.setTooltip(Tooltip.create(Component.literal(f.help() + (!mixed ? "" : "\n\nThey differ: "
+                        + across.entrySet().stream().map(e -> (f.seconds() ? Time.format(e.getKey()) + " " + Time.unit() : e.getKey().toString())
+                        + " on " + e.getValue()).collect(java.util.stream.Collectors.joining(", "))
+                        + ". Type a value to give it to all of them, or leave this empty to keep each one's own."))));
                 box.setResponder(t -> {
+                    if (mixed && t.isBlank()) {
+                        group.unify.remove(f.setting());
+                        spawner.set(f.setting(), group.base().get(f.setting()));
+                        box.setTextColor(Theme.TEXT);
+                        changed();
+                        return;
+                    }
                     try {
                         int ticks = f.seconds() ? Time.parse(t) : Integer.parseInt(t.strip());
                         boolean ok = ticks >= f.setting().min && ticks <= f.setting().max;
                         box.setTextColor(ok ? Theme.TEXT : Theme.BAD);
                         if (ok) {
                             spawner.set(f.setting(), ticks);
+                            if (mixed) {
+                                group.unify.add(f.setting());
+                            }
                             changed();
                         }
                     } catch (NumberFormatException e) {
@@ -768,27 +924,6 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
                     g.setTooltipForNextFrame(font, Component.literal(f.help()), mouseX, mouseY);
                 }
             }
-        }
-    }
-
-    /** A compact invitation keeps the editor focused; bulk work has its own review flow. */
-    private final class BatchCard extends Card {
-        private final Chip open;
-
-        BatchCard() {
-            super("Find copies", 0xFFB48CFF,
-                    "Find copies of this design across the world, then review your changes before applying them.");
-            open = body(Chip.of("Find copies…", 120, 18,
-                    () -> minecraft.setScreenAndShow(new SpawnerBatchScreen(SpawnerEditorScreen.this, true)))
-                    .tip("Find matching spawners in loaded chunks. Your unsaved edits become the replacement."));
-        }
-
-        @Override
-        protected int layoutBody(int x, int y, int w) {
-            open.setX(x);
-            open.setY(y);
-            open.setWidth(w);
-            return 18;
         }
     }
 
