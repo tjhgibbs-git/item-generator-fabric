@@ -17,9 +17,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Copying the edited spawner onto the other spawners around it: find the ones that match the
- * linked spawner as it is in the world, i.e. as loaded or last saved, not the unsaved edits
- * (identical, or spawning the same mobs), then overwrite them.
+ * Spawners around you on a server without Stacksmith's world hooks: reads every loaded spawner
+ * within a radius, and writes changes to them with ordinary commands.
  *
  * <p>Finding reads each spawner's full data from the server, one at a time (the game only
  * tracks one block query at once). Writing goes through {@link CommandQueue}. Both need op: the
@@ -29,20 +28,9 @@ public final class SpawnerBatch {
     private SpawnerBatch() {
     }
 
-    public enum Match {
-        /** Same settings and mobs (the spawn countdown aside); overwritten completely. */
-        IDENTICAL,
-        /** Same mobs, any settings; gets the new mobs, keeping its own settings unless asked. */
-        SAME_MOBS
-    }
-
     public static final int MAX_RADIUS = 128;
 
     public static int radius = 32;
-    public static Match match = Match.IDENTICAL;
-    /** With {@link Match#SAME_MOBS}: also overwrite their timing and ranges. */
-    public static boolean overwriteSettings;
-
     /** Every spawner found within the radius (not the edited one), or null before a search. */
     private static Map<BlockPos, SpawnerSpec> found;
     private static int toRead, read;
@@ -178,33 +166,28 @@ public final class SpawnerBatch {
         return System.currentTimeMillis() < highlightUntil ? highlighted : List.of();
     }
 
-    /** How many spawners the last search read. */
-    public static int foundCount() {
-        return found == null ? 0 : found.size();
-    }
-
-    /** The found spawners that match {@code reference} under the current {@link #match}. */
-    public static List<BlockPos> matches(SpawnerSpec reference) {
-        List<BlockPos> out = new ArrayList<>();
+    /**
+     * The spawners the last search read, as index entries (their raw data is the parsed
+     * spawner's own), nearest first. Empty before a search or after the world changed.
+     */
+    public static List<SpawnerIndex.Entry> entries() {
+        List<SpawnerIndex.Entry> out = new ArrayList<>();
         Minecraft mc = Minecraft.getInstance();
-        if (found == null || searching || reference == null || mc.level == null
-                || searchWorld != mc.getConnection()
+        if (found == null || searching || mc.level == null || searchWorld != mc.getConnection()
                 || !mc.level.dimension().identifier().toString().equals(searchDimension)) {
             return out;
         }
-        found.forEach((pos, s) -> {
-            if (match == Match.IDENTICAL ? s.sameAs(reference) : s.sameMobs(reference)) {
-                out.add(pos);
-            }
-        });
+        found.forEach((pos, s) -> out.add(new SpawnerIndex.Entry(searchDimension, pos, s, s.toTag())));
         return out;
     }
 
     /**
-     * Overwrites every match of {@code reference} with {@code edited} (or, matching by mob and
-     * keeping settings, with just its mobs). Returns null when started, else why not.
+     * Writes {@code changes} from {@code edited} to each of {@code targets} with commands, each
+     * keeping its other settings and its countdown. Returns null when started, else why not.
+     * {@code done} runs once the last command is sent (not when the server has acted on it).
      */
-    public static String apply(SpawnerSpec reference, SpawnerSpec edited, Commands.Style style) {
+    public static String applyChanges(List<SpawnerIndex.Entry> targets, SpawnerSpec edited, SpawnerWorldBatch.Changes changes,
+                                      Commands.Style style, Runnable done) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || searchWorld != mc.getConnection()
                 || !mc.level.dimension().identifier().toString().equals(searchDimension)) {
@@ -214,38 +197,35 @@ public final class SpawnerBatch {
         if (searching || writing()) return "Wait for the current operation to finish.";
         if (ChestIndex.busy) return "Wait for container indexing to finish.";
         if (!edited.problems().isEmpty()) return "Fix the spawner settings before applying.";
-        List<BlockPos> targets = matches(reference);
-        if (targets.isEmpty()) {
-            return "Nothing to apply to.";
-        }
+        if (targets.isEmpty()) return "No spawners selected.";
         // Validate every location before queuing any write. This detects unloaded or removed
         // blocks, but is not a fresh server-side comparison of their saved data.
-        for (BlockPos p : targets) {
-            if (!(mc.level.getBlockEntity(p) instanceof SpawnerBlockEntity)) {
+        for (SpawnerIndex.Entry t : targets) {
+            if (!(mc.level.getBlockEntity(t.pos()) instanceof SpawnerBlockEntity)) {
                 forget();
-                return "A target was removed or unloaded. Search again before applying.";
+                return "A spawner was removed or unloaded. Search again before applying.";
             }
         }
         List<String> commands = new ArrayList<>();
-        for (BlockPos p : targets) {
-            SpawnerSpec target = found.get(p);
-            SpawnerSpec out = match == Match.SAME_MOBS && !overwriteSettings ? target.withPoolOf(edited)
-                    // Delay is each spawner's own countdown to its next spawn: left as it was.
-                    : edited.copy().set(SpawnerSpec.Setting.DELAY, target.get(SpawnerSpec.Setting.DELAY));
-            List<String> steps = Commands.setSpawnerInSteps(out, p.getX() + " " + p.getY() + " " + p.getZ(), style, Commands.CHAT_LIMIT);
+        List<BlockPos> written = new ArrayList<>();
+        for (SpawnerIndex.Entry t : targets) {
+            // A copy of the target with only the changes: its countdown and other settings stay.
+            SpawnerSpec out = SpawnerWorldBatch.preview(t.spec(), edited, changes);
+            if (SpawnerWorldBatch.conflict(out) != null) continue;
+            List<String> steps = Commands.setSpawnerInSteps(out, t.where(), style, Commands.CHAT_LIMIT);
             if (steps == null) {
                 return "This spawner is too long to send from chat.";
             }
             commands.addAll(steps);
+            written.add(t.pos());
         }
-        int targetCount = targets.size();
-        CommandQueue.add(commands, () -> status = "Commands sent for " + targetCount
-                + (targetCount == 1 ? " spawner. Rescan to check." : " spawners. Rescan to check."));
-        highlight(targets);
+        if (written.isEmpty()) return "Every selected spawner would be broken by this change.";
+        CommandQueue.add(commands, done);
+        highlight(written);
         // They no longer hold what was found; search again to see the result.
         generation++;
         found = null;
-        status = "Sending commands for " + targetCount + (targetCount == 1 ? " spawner…" : " spawners…");
+        status = "";
         return null;
     }
 

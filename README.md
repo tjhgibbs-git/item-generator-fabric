@@ -22,7 +22,7 @@ spawner discovery, verified bulk editing and datapack tag scanning. See [Server 
 Press **J** (rebindable). Tabs: **Spawner**, **Mob**, **Chests**, **Item** and **World**.
 
 **Look at a spawner and press J** to edit that spawner: the Spawner tab opens on it, and
-**Overwrite the spawner** writes your changes back to the same block. That is the main way
+**Save this spawner** writes your changes back to that block only. That is the main way
 in: block → spawner → mob (**Edit mob…** opens the full mob editor for each mob in it).
 
 **Import…** (top right) brings in the item you're holding, the spawner you're looking at, or
@@ -108,19 +108,23 @@ tags: [legendary, bound]
   range draws the area mobs appear in (a box one block above and below the spawner). They stay
   after you close the editor, so you can walk to the edge; reopen it and click again to hide them.
   **↺ Reset** (top of the middle column) goes back to the spawner as it was when you loaded it.
-- **Apply to nearby copies** (bottom of the middle column), for spawners you placed several
-  times: **Find** reads every spawner within the radius (in loaded chunks) and counts those that
-  match this one *as it is in the world*: as loaded, or as you last saved it with Overwrite, never
-  your unsaved edits (the card says what it looks for, e.g. "Finds Pig, as saved"). So turning a
-  pig spawner into a zombie one still finds the other pig spawners until you overwrite. **Identical** matches mobs and settings (the running spawn
-  countdown aside) and overwrites them completely. **Same mob** matches the same mob(s)
-  whatever the settings, and gives them only your mobs and light levels, keeping their own
-  delays, counts and ranges unless you tick **Overwrite settings too**. The matches are
-  outlined in the world for a few seconds. This spawner itself is written by **Overwrite the
-  spawner**. Needs op, like saving.
+- **The bar under the tabs** always says what the editor is pointed at, in the colour of the main
+  button: **NEW SPAWNER** (blue, *Place where I look*), **THIS SPAWNER** · Zombie at 10 -60 4 · 1 of 7
+  like it (green, *Save this spawner*: only that block), **NEW COPY** of the spawner at… (purple: that
+  one won't change), or **ALL 7** Zombie spawners (amber, *Apply to all 7…*, from the World tab).
+  **Use as a new copy** (in the bar) stops editing the linked spawner and keeps what's here as a new
+  one to place somewhere else.
+- **Also change the other N…** (bottom, when editing a spawner in the world): reviews giving what you
+  changed here to the other spawners of the same kind (same mobs, gear and data) anywhere in the
+  world, and to this one. It is the same review as the World tab's Edit all: the changes, every
+  spawner with a tick box (untick any; **Identical** ticks only the ones set up exactly like this
+  one), and a button that counts what will really be written. Only what you changed is written;
+  each spawner keeps its other settings and its countdown. **↺ Undo** afterwards puts them back. On a
+  server without Stacksmith's hooks it looks in loaded chunks within 128 blocks and writes with
+  commands (not checked, no undo). Needs op, like saving.
 - **Right:** the mob, rendered wearing its gear, and:
-  - **Overwrite the spawner** (green, when the tab is tied to a block; the line under it says
-    whether you have unsaved changes) or **Place where I look**
+  - **Save this spawner** (green, when the tab is tied to a block; the line under it says
+    whether you have unsaved changes, and that it is only this one) or **Place where I look**
     (replaces a spawner you're looking at, otherwise places against the face; the tab is then
     tied to that block). Spawners too long for one chat command are sent in steps: the data
     is built in command storage piece by piece, then copied onto a fresh spawner at once;
@@ -142,7 +146,8 @@ tags: [legendary, bound]
   coordinates; ↑ ↓ and
   **Enter** load, or **Load** on a row; hover a row for its mobs, light and settings. ★/☆ on a row
   stars or unstars it (an unstarred row stays until you leave, so a misclick is one click to
-  undo). Loading keeps the tab tied to its block, so **Overwrite** then puts it there.
+  undo). Loading while you're editing a spawner in the world asks where it should go: **Into this
+  spawner** (nothing is written until you save) or **Start a new spawner from it**.
 
 ### World tab: every spawner in the world
 
@@ -161,21 +166,45 @@ Hover a kind for its full mobs and settings.
 - **Click a location** to teleport onto it, looking down at it: the list closes, and **J** edits
   that spawner. The World tab brings the list back as you left it.
 - **Edit** (on a location) travels there and opens it in the Spawner tab; **Done** comes back.
-- **Edit all N** opens the editor on the kind's usual setup. Change what you want (settings, gear,
-  the mobs themselves, or load one from **Recent…**), then **Apply to all N…**: a review lists
-  exactly what will change, then it's written to every listed copy **without moving you**.
-  Only what you changed is applied: each copy keeps its own other settings. The live spawn
-  countdown (`Delay`) is ignored throughout: it never splits a kind, never shows as a difference,
-  and isn't offered or written when editing many at once. A
-  copy next to unexplored terrain can't be loaded from afar without generating terrain, so you're
-  taken to it for a moment and brought back to exactly where you were. Copies changed since the
-  scan, or that the change would break (waiting at least longer than at most), are skipped and
-  listed with a **TP** button.
+- **Edit all N** opens the editor on the kind's usual setup (the amber **ALL N** bar). A setting the
+  copies don't agree on shows as **mixed**: leave it empty to keep each one's own, or type a value
+  to give it to all. Change what you want (settings, gear, the mobs themselves, or load one from
+  **Recent…**), then **Apply to all N…**: the review lists the changes and every spawner with a tick
+  box, then writes to the ticked ones **without moving you**. Only what you changed is applied.
+  The live spawn countdown (`Delay`) never splits a kind, never shows as a difference and isn't
+  written here. A copy next to unexplored terrain can't be loaded from afar without generating
+  terrain, so you're taken to it for a moment and brought back to exactly where you were. Copies
+  changed since the scan are skipped and listed with a **TP** button; ones the change would break
+  (waiting at least longer than at most) are marked in the review and not counted. **↺ Undo** puts
+  back everything the update changed (a spawner changed again since is left alone).
+- **Prime all…** sets the countdown of every listed spawner to 0, so each fires the moment a player
+  walks in range (how you want them while building, and at release). You review the list first;
+  nothing else changes, and Undo brings the countdowns back.
 - **Search** matches mob names, nicknames, gear and data, dimensions and coordinates; a search
   that only matches locations opens those kinds. **All dimensions** switches to one dimension.
 - The list is read from the saved world plus the loaded chunks (spawners near you are always
   current). **Rescan** saves the world and re-reads the regions that changed; it never loads or
   generates chunks. The result is cached per world.
+
+#### Containers
+
+**Containers** (top right of the World tab; also **Find in world…** on the Chests tab) lists every
+chest, barrel and shulker box the same way.
+
+- **By contents** (the default): one row per set of identical contents or loot table, e.g.
+  "Bread ×8, Diamond ×3 · ×4". Click a row for its locations, a location to teleport onto it
+  (**J** then edits it), **Edit** to travel there and open it, or **Edit all N** to set the contents
+  once and give them to every one (each stays the block it is).
+- **By item**: one row per distinct item (type and data, whatever the stack size) with every
+  container that holds it. Search for an item by name or id to see where it is; **Edit item**
+  opens it in the item editor and then puts the edited item in all of those containers, each
+  stack keeping its size and slot. This is the way to buff or nerf an item across a map.
+- Both go through a review with a tick box per container, are checked against what the scan saw,
+  read back after writing, and can be undone. Editing many at once needs a world you're running
+  (singleplayer or LAN host); on a server the list covers loaded chunks and you edit one at a
+  time. Items inside shulker boxes inside containers aren't listed separately.
+- **Drop loot table** in the container editor turns a loot chest into an ordinary one so its
+  contents can be set.
 
 ### Mob tab
 

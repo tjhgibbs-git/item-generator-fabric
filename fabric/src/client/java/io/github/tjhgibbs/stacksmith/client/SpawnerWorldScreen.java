@@ -30,7 +30,10 @@ import java.util.stream.Collectors;
  * and data). A kind opens into its locations: click one to teleport onto it, Edit to travel
  * there and edit it, or Edit all to change every copy at once without moving.
  */
-public final class SpawnerWorldScreen extends StacksmithScreen {
+public final class SpawnerWorldScreen extends StacksmithScreen implements StacksmithScreen.WorldList {
+    /** Which of the World tab's two lists was shown last: containers (true) or spawners. */
+    static boolean containers;
+
     /** One kind of spawner, as listed: the copies that pass the search and dimension filter. */
     record Group(String key, String title, String detail, String nickname, SpawnerSpec base, String baseSetup,
                  List<SpawnerIndex.Entry> entries, int total, int setups, boolean matchedByLocation) {}
@@ -56,7 +59,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
     private static final int TOP = 24;
     private final ScrollPane list = pane(new ScrollPane());
     private EditBox search;
-    private Chip rescan, dimChip, expandAll;
+    private Chip rescan, dimChip, expandAll, primeAll;
     private List<Group> groups = List.of();
     private Map<String, String> setupOf = new HashMap<>();
     private int total, kinds;
@@ -94,6 +97,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
     @Override
     protected void init() {
         header(Tab.WORLD, null, null, null, null, null);
+        worldSwitch(false);
         int x = innerX(), w = innerW();
         int rescanW = 62, dimW = 92;
         search = addRenderableWidget(new EditBox(font, x, TOP + 4, w - rescanW - dimW - 8, 16, Component.literal("Search")));
@@ -114,6 +118,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
                 + (minecraft.getSingleplayerServer() != null ? "Spawners near you refresh when this tab opens."
                 : "Server results are a snapshot; rescan after other builders make changes."));
         expandAll = addRenderableWidget(Chip.of("Open all", 70, 18, this::toggleAll).at(x, height - 25));
+        primeAll = addRenderableWidget(Chip.of("Prime all…", 70, 18, this::primeAll).at(x + 74, height - 25));
         addRenderableWidget(Chip.of("Done", 60, 18, this::onClose).at(x + w - 60, height - 25));
         list.bounds(x, listTop(), w, listBottom() - listTop());
         if (!started) {
@@ -253,6 +258,22 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
         boolean anyClosed = groups.stream().anyMatch(g -> !isOpen(g));
         expandAll.setMessage(Component.literal(anyClosed ? "Open all" : "Close all"));
         expandAll.active = !groups.isEmpty();
+        int unprimed = (int) groups.stream().flatMap(g -> g.entries().stream()).filter(e -> e.spec().get(SpawnerSpec.Setting.DELAY) != 0).count();
+        primeAll.active = unprimed > 0 && SpawnerWorldBatch.canPrime() && Delivery.canUse("setblock");
+        primeAll.tip(!SpawnerWorldBatch.canPrime() ? "This server's Stacksmith is too old to prime spawners: update it."
+                : unprimed == 0 ? "Every listed spawner is already primed: its countdown is 0, so it fires as soon as a player is in range."
+                : "Set the countdown of every listed spawner to 0, so each fires as soon as a player walks in range ("
+                + unprimed + " of them aren't). You review the list first; nothing else about them changes.");
+    }
+
+    /** Reviews setting the countdown of every listed spawner (the search and dimension filter apply) to 0. */
+    private void primeAll() {
+        if (SpawnerWorldBatch.busy()) { message("Wait for the update to finish.", Theme.WARN); return; }
+        scroll = list.scroll();
+        List<SpawnerIndex.Entry> all = groups.stream().flatMap(g -> g.entries().stream()).toList();
+        boolean filtered = all.size() < total;
+        minecraft.setScreenAndShow(new SpawnerApplyScreen(this, new SpawnerApplyScreen.Targets(
+                (filtered ? "the " + all.size() + " listed spawners" : "all " + all.size() + " spawners"), new SpawnerSpec(), all, this)));
     }
 
     private void toggle(Group g) {
@@ -344,7 +365,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
         Session.spawnerOriginal = g.base().copy();
         String name = g.nickname() != null ? g.nickname() : g.title();
         minecraft.setScreenAndShow(new SpawnerEditorScreen(this,
-                new SpawnerApplyScreen.Targets(name, g.base().copy(), g.entries(), g.setups(), this)));
+                new SpawnerApplyScreen.Targets(name, g.base().copy(), g.entries(), this)));
     }
 
     private void message(String text, int color) {
@@ -415,11 +436,11 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
             }
         }
         if (!message.isEmpty()) {
-            int mx = x + 76, mw = w - 76 - 66;
+            int mx = x + 150, mw = w - 150 - 66;
             g.text(font, font.plainSubstrByWidth(message, mw), mx, height - 20, messageColor, false);
         } else if (!groups.isEmpty()) {
-            String hint = "Click a kind to see where they are; click a location to teleport onto it.";
-            g.text(font, font.plainSubstrByWidth(hint, w - 76 - 66), x + 76, height - 20, Theme.TEXT_FAINT, false);
+            String hint = "Click a kind for locations; click one to teleport.";
+            g.text(font, font.plainSubstrByWidth(hint, w - 150 - 66), x + 150, height - 20, Theme.TEXT_FAINT, false);
         }
     }
 
@@ -532,7 +553,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
     }
 
     /** A small triangle: pointing right when closed, down when open. */
-    private static void chevron(GuiGraphicsExtractor g, int x, int y, boolean down, int color) {
+    static void chevron(GuiGraphicsExtractor g, int x, int y, boolean down, int color) {
         for (int i = 0; i < 4; i++) {
             if (down) g.fill(x + i, y + i, x + 7 - i, y + i + 1, color);
             else g.fill(x + 1 + i, y - 1 + i, x + 2 + i, y + 6 - i, color);
@@ -669,7 +690,7 @@ public final class SpawnerWorldScreen extends StacksmithScreen {
         };
     }
 
-    private static int dimensionColor(String id) {
+    static int dimensionColor(String id) {
         return switch (id) {
             case "minecraft:overworld" -> 0xFF8FD18F;
             case "minecraft:the_nether" -> 0xFFFF8A65;

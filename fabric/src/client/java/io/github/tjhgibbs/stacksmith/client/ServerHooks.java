@@ -11,7 +11,7 @@ import java.util.function.Consumer;
 /** Optional versioned connection. Channel registration alone never enables an operation. */
 final class ServerHooks {
     private ServerHooks() {}
-    static boolean index, apply, tags;
+    static boolean index, apply, tags, undo, prime;
     static final String REQUIRED = "Requires compatible Stacksmith world hooks on this server (Fabric server mod).";
     private static Object connection;
     private static int serial, ticks;
@@ -45,6 +45,8 @@ final class ServerHooks {
             request(Nbt.compound().put("op", "hello"), reply -> {
                 if (!reply.getString("op", "").equals("hello") || reply.getLong("version", 0) != Wire.VERSION) return;
                 index = reply.getLong("index", 0) != 0; apply = reply.getLong("apply", 0) != 0; tags = reply.getLong("tags", 0) != 0;
+                undo = reply.getLong("undo", 0) != 0;
+                prime = reply.getLong("prime", 0) != 0;
             });
         }
         long nowMs = System.currentTimeMillis();
@@ -56,7 +58,7 @@ final class ServerHooks {
         }
     }
     static void reset(String reason) {
-        index = apply = tags = false; ticks = 0; reader.clear();
+        index = apply = tags = undo = prime = false; ticks = 0; reader.clear();
         var old = List.copyOf(pending.values()); pending.clear();
         connection = null;
         SpawnerIndex.remoteReset();
@@ -70,7 +72,7 @@ final class ServerHooks {
             var frames = Wire.encode(id, body);
             String op = body.getString("op", "");
             pending.put(id, new Pending(reply, System.currentTimeMillis() + 300_000,
-                    op.equals("index") || op.equals("apply") || op.equals("tags")));
+                    op.equals("index") || op.equals("apply") || op.equals("undo") || op.equals("tags")));
             for (byte[] frame : frames) ClientPlayNetworking.send(new WorldPayload(frame));
         } catch (RuntimeException ex) { pending.remove(id); reply.accept(error("Could not send request: " + ex.getMessage())); }
     }

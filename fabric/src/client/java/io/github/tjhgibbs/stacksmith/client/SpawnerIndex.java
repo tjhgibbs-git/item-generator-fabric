@@ -112,20 +112,15 @@ public final class SpawnerIndex {
         status = indexed ? "Update cancelled · previous saved results retained" : "Discovery cancelled. No spawners changed.";
     }
 
-    public static List<Entry> matches(SpawnerSpec reference) {
-        return matches(reference, Session.spawnerDimension, Session.spawnerPos);
+    /** Every indexed spawner of the same kind as {@code reference}: the same mobs, gear and data. */
+    public static List<Entry> sameKind(SpawnerSpec reference) {
+        if (!current() || !indexed || reference == null) return List.of();
+        String kind = SpawnerWorldScreen.mobsKey(reference);
+        return entries.values().stream().filter(e -> SpawnerWorldScreen.mobsKey(e.spec()).equals(kind)).toList();
     }
 
-    public static List<Entry> matches(SpawnerSpec reference, String sourceDimension, BlockPos sourcePos) {
-        if (!current() || reference == null) return List.of();
-        return entries.values().stream()
-                .filter(e -> !(e.dimension().equals(sourceDimension) && e.pos().equals(sourcePos)))
-                .filter(e -> SpawnerBatch.match == SpawnerBatch.Match.IDENTICAL
-                        ? e.spec().sameAs(reference) : e.spec().sameMobs(reference))
-                .sorted(Comparator.comparing(Entry::dimension)
-                        .thenComparingInt(e -> e.pos().getX()).thenComparingInt(e -> e.pos().getY())
-                        .thenComparingInt(e -> e.pos().getZ()))
-                .toList();
+    public static String key(String dimension, BlockPos pos) {
+        return dimension + ":" + pos.getX() + ":" + pos.getY() + ":" + pos.getZ();
     }
 
     /** Update the displayed snapshot after a verified write; disk region caches remain independent. */
@@ -178,8 +173,8 @@ public final class SpawnerIndex {
     private static void restoreAfterTravel(Entry target, net.minecraft.client.gui.screens.Screen screen, Object connection, int attempt) {
         Minecraft mc = Minecraft.getInstance();
         if (screen == null || attempt >= 150 || mc.getConnection() != connection || !current()) return;
-        if (screen instanceof SpawnerBatchScreen browser && browser.dismissed) return;
         if (screen instanceof SpawnerWorldScreen browser && browser.dismissed) return;
+        if (screen instanceof ContainerWorldScreen browser && browser.dismissed) return;
         var shown = mc.gui.screen();
         if (shown != null && shown != screen && !(shown instanceof net.minecraft.client.gui.screens.LevelLoadingScreen)
                 && !(shown instanceof net.minecraft.client.gui.screens.GenericMessageScreen)) return;

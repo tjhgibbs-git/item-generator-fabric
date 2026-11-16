@@ -1,5 +1,14 @@
 # Handoff notes
 
+## Next up: client-side baseline (2026-11-16)
+
+The world/bulk flow was reworked on 2026-11-16 (uncommitted in the working tree at the time of
+writing). The next job is making those tools work on servers without the mod, keeping the
+full-power paths as the default where available: see
+[CLIENT_FIRST_HANDOFF.md](CLIENT_FIRST_HANDOFF.md). It supersedes the scope notes below where they
+conflict (including "Don't spend effort on non-op workarounds": op is still assumed, but a server
+mod is not).
+
 ## Current work: spawner workspace (2026-11-02)
 
 **2026-11-03:** the World tab was rebuilt around the map-maker workflow: spawners grouped by kind

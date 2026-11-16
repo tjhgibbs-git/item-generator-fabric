@@ -44,6 +44,11 @@ public final class ChestIndex {
     static final Map<String, Entry> entries = new LinkedHashMap<>();
     static String status = "Index the world to find containers by type, item or coordinates.";
     static boolean busy;
+    /** Whether {@link #entries} holds a finished scan of the world you're in. */
+    static boolean indexed;
+    /** Bumped whenever {@link #entries} changes, so open screens know to regroup. */
+    static int version;
+    static long indexedAt;
     private static Object world;
     private static int generation;
     private static final Deque<BlockPos> pending = new ArrayDeque<>();
@@ -89,8 +94,33 @@ public final class ChestIndex {
                 data -> {
                     Entry fresh = entry(be, data);
                     entries.put(fresh.key(), fresh);
+                    version++;
                     done.accept(fresh);
                 });
+    }
+
+    /** Scans once per world: the World tab's container list calls this when it opens. */
+    static void ensure() {
+        if (!indexed && !busy) start();
+    }
+
+    /** A verified write: the list shows the new contents without a rescan. */
+    static void recordUpdated(Entry previous, Nbt.Compound data) {
+        Object expected = world;
+        Nbt.Compound copied = data.copy();
+        Minecraft.getInstance().execute(() -> {
+            if (expected != world) return;
+            Entry fresh = new Entry(previous.dimension(), previous.pos(), previous.state(), new ChestSpec(previous.chest().block(), copied));
+            entries.put(fresh.key(), fresh);
+            version++;
+        });
+    }
+
+    static void recordMissing(Entry previous) {
+        Object expected = world;
+        Minecraft.getInstance().execute(() -> {
+            if (expected == world && entries.remove(previous.key()) != null) version++;
+        });
     }
 
     static void start() {
@@ -103,6 +133,8 @@ public final class ChestIndex {
         if (world != current) {
             entries.clear();
             world = current;
+            indexed = false;
+            version++;
         }
         int gen = ++generation;
         busy = true;
@@ -223,6 +255,8 @@ public final class ChestIndex {
             generation++;
             entries.clear();
             pending.clear();
+            indexed = false;
+            version++;
             busy = false;
             reading = false;
             world = null;
@@ -268,6 +302,9 @@ public final class ChestIndex {
 
     private static void finish() {
         busy = false;
+        indexed = true;
+        indexedAt = System.currentTimeMillis();
+        version++;
         status =
                 entries.size()
                         + " containers indexed · "

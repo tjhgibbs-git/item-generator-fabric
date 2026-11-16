@@ -45,6 +45,10 @@ writes. Requests are bounded to 8 MiB of UTF-8 SNBT, 24,000-byte frame bodies, 6
 per five seconds per player. An inactive operation times out on the client after five minutes;
 progress replies extend a running write's deadline.
 
+The hello reply also advertises `undo` (put back the last bulk update, per player, where each
+spawner is still as that update left it) and `prime` (set the countdown of the selected spawners
+to 0). A client talking to an older server build leaves those two buttons disabled.
+
 Chest discovery retains its existing saved-world implementation in singleplayer and loaded-chunk
 implementation on remote servers. This change adds no remote whole-world chest operation.
 

@@ -87,6 +87,7 @@ public final class WorldSpawner {
             SpawnerBatch.forget();
         }
         Session.spawner = spawner;
+        Session.spawnerCopyOf = null;
         Session.spawnerEntry = 0;
         Session.spawnerPos = pos == null ? null : pos.immutable();
         Session.spawnerDimension = pos == null || Minecraft.getInstance().level == null ? null

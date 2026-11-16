@@ -1,5 +1,30 @@
 # World spawner workflow
 
+## One review flow, scope bar, undo, prime (2026-11-16)
+
+`SpawnerBatchScreen` (Find copies…) is gone. There is one bulk flow, `SpawnerApplyScreen`, reached
+from the World tab's **Edit all**, the editor's **Also change the other N…** (finds the same kind via
+the index, or loaded chunks within 128 blocks on a server without hooks, and includes the linked
+spawner), and **Prime all…** (sets `Delay` to 0, nothing else). It always writes the difference
+between a base and the edit to an explicit, tickable list of targets; the apply button counts
+targets that will really be written (ticked and not broken by the change).
+
+- `SpawnerApplyScreen.Targets` carries the entries, unticked keys, and `unify`: settings typed into a
+  "mixed" field with the usual value, which must still be written to all (`diffBase` makes them
+  count as changed, locally and in the base sent to a server).
+- `SpawnerWorldBatch` / `ServerBatch` keep the last run's before-data: `undo()` restores each
+  target that is still as the run left it (one level; an undo can't be undone). Undo of a prime
+  restores the countdowns; otherwise countdowns stay the spawner's own. Server ops `undo` and
+  `apply{prime:1}` are advertised in the hello reply (`undo`, `prime`); older servers lack them and
+  the client greys those buttons.
+- `SpawnerBatch` is now only the loaded-chunk reader and command writer for servers without hooks
+  (no verification, no undo).
+- The editor's scope bar (`SpawnerEditorScreen.Scope`) is the single source for the mode's wording
+  and colours: NEW, COPY (`Session.spawnerCopyOf`), ONE, ALL.
+
+The sections below predate this; where they mention Find copies or matching options, the above
+replaces them.
+
 ## World tab (grouped browser, 2026-11-03)
 
 The World tab (`SpawnerWorldScreen`) groups the index by kind: the ordered list of spawned

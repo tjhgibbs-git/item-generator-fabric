@@ -46,6 +46,36 @@ public final class ServerHooksGameTests {
         });
     }
     @GameTest(structure = EMPTY, maxTicks = 100)
+    public void undoPutsBackOnlyWhatIsStillAsWritten(GameTestHelper h) {
+        var first = place(h, 4); var second = place(h, 6);
+        var server = h.getLevel().getServer();
+        var index = new ServerIndex(server, () -> true);
+        index.entries.put(first.key(), first); index.entries.put(second.key(), second);
+        var writer = new ServerBatch(server, index, () -> true, () -> {});
+        String error = writer.startChanges(List.of(first, second), first.spec(), first.spec().copy().set(SpawnerSpec.Setting.COUNT, 7));
+        if (error != null) { h.fail(error); return; }
+        h.runAfterDelay(10, () -> {
+            if (writer.busy() || writer.completed != 2 || !writer.canUndo()) { h.fail("Update didn't finish: " + writer.status); return; }
+            // Someone changes the second one again before the undo: it must be left alone.
+            var be = h.getLevel().getBlockEntity(second.pos());
+            var again = McNbt.fromGame(be.saveWithoutMetadata(h.getLevel().registryAccess())).put("SpawnCount", Nbt.s(11));
+            try { be.loadWithComponents(net.minecraft.world.level.storage.TagValueInput.create(
+                    net.minecraft.util.ProblemReporter.DISCARDING, h.getLevel().registryAccess(), McNbt.toGame(again))); }
+            catch (Exception ex) { throw new RuntimeException(ex); }
+            String why = writer.undo();
+            if (why != null) { h.fail(why); return; }
+            h.runAfterDelay(10, () -> {
+                var one = McNbt.fromGame(h.getLevel().getBlockEntity(first.pos()).saveWithoutMetadata(h.getLevel().registryAccess()));
+                var two = McNbt.fromGame(h.getLevel().getBlockEntity(second.pos()).saveWithoutMetadata(h.getLevel().registryAccess()));
+                if (writer.busy() || writer.completed != 1 || writer.skipped != 1) { h.fail("Unexpected undo results: " + writer.status); return; }
+                if (one.getLong("SpawnCount", 0) != 2 || one.getLong("Delay", 0) != 123) { h.fail("Undo didn't restore the spawner: " + one); return; }
+                if (two.getLong("SpawnCount", 0) != 11) { h.fail("Undo overwrote a spawner changed since the update"); return; }
+                if (writer.canUndo()) { h.fail("An undo must not be undoable"); return; }
+                h.succeed();
+            });
+        });
+    }
+    @GameTest(structure = EMPTY, maxTicks = 100)
     public void permissionLossStopsRemainingWrites(GameTestHelper h) {
         var first = place(h, 4); var second = place(h, 6);
         var server = h.getLevel().getServer(); var allowed = new AtomicBoolean(true);
