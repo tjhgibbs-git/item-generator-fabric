@@ -1,5 +1,12 @@
 # Container editing and laptop handoff
 
+**Later on 2026-11-16:** container Edit all and Edit item now also work without a world of yours
+to run (any server, as op): `ChestWorldBatch` falls back to `CommandRun`, which re-reads each
+container, builds its new contents in command storage and merges them in (removing dropped keys
+such as `LootTable` first; the block is never replaced, so nothing drops), then reads it back.
+Undo is kept client-side until disconnect. The loaded-chunk list is of one dimension and is read
+again after travelling. Both World lists have the distance filter.
+
 **2026-11-16:** the world list moved to the World tab (`ContainerWorldScreen`): grouped by identical
 contents or by item, auto-scanned, with teleport, travelling Edit, Edit all, and "Edit item" across
 every container holding it. Bulk writes go through `ChestApplyScreen` (review, tick boxes, undo) and

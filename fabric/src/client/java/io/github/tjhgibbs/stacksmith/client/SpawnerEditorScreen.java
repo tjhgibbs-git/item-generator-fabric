@@ -133,7 +133,7 @@ public final class SpawnerEditorScreen extends StacksmithScreen {
             alsoOthers.active = others != 0 && Session.spawnerSaved != null;
             alsoOthers.tip(others == 0 ? "No other spawner in this world spawns the same mobs with the same gear and data."
                     : "Review giving what you changed here to the other spawners with the same mobs, gear and data"
-                    + (SpawnerIndex.available() ? " anywhere in this world" : " in loaded chunks nearby")
+                    + (SpawnerIndex.clientBackend() ? " in the chunks loaded around you" : " anywhere in this world")
                     + ". You choose which ones; each keeps the settings you didn't change.");
         }
     }

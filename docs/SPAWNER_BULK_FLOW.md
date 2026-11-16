@@ -1,11 +1,21 @@
 # World spawner workflow
 
+## Client path (2026-11-16, later)
+
+Without an integrated server or hooks, `SpawnerIndex` builds its list from the client's loaded
+chunks (one `/data` query per spawner through `BlockReads`), for the current dimension only, and
+`SpawnerWorldBatch` writes by commands through `CommandRun` (read fresh, skip if changed, send,
+read back). Undo and prime work the same way; undo is kept client-side until disconnect. The
+backend is chosen at each refresh (`Backend`): hooks arriving after join replace a client-built
+list. `SpawnerBatch` (the old 128-block nearby search and unchecked writer) is gone: "Also change
+the others" now always goes through the index. The World lists have a distance filter (*Within
+32 / 64 / 128 / 256* of where you stand, from your live position, like the distance column).
+
 ## One review flow, scope bar, undo, prime (2026-11-16)
 
 `SpawnerBatchScreen` (Find copies…) is gone. There is one bulk flow, `SpawnerApplyScreen`, reached
 from the World tab's **Edit all**, the editor's **Also change the other N…** (finds the same kind via
-the index, or loaded chunks within 128 blocks on a server without hooks, and includes the linked
-spawner), and **Prime all…** (sets `Delay` to 0, nothing else). It always writes the difference
+the index, and includes the linked spawner), and **Prime all…** (sets `Delay` to 0, nothing else). It always writes the difference
 between a base and the edit to an explicit, tickable list of targets; the apply button counts
 targets that will really be written (ticked and not broken by the change).
 
@@ -17,8 +27,8 @@ targets that will really be written (ticked and not broken by the change).
   restores the countdowns; otherwise countdowns stay the spawner's own. Server ops `undo` and
   `apply{prime:1}` are advertised in the hello reply (`undo`, `prime`); older servers lack them and
   the client greys those buttons.
-- `SpawnerBatch` is now only the loaded-chunk reader and command writer for servers without hooks
-  (no verification, no undo).
+- (Since replaced: see "Client path" above.) `SpawnerBatch` was the loaded-chunk reader and
+  unchecked command writer for servers without hooks.
 - The editor's scope bar (`SpawnerEditorScreen.Scope`) is the single source for the mode's wording
   and colours: NEW, COPY (`Session.spawnerCopyOf`), ONE, ALL.
 

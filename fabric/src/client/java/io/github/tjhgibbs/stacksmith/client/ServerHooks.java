@@ -41,7 +41,8 @@ final class ServerHooks {
         Object now = Minecraft.getInstance().getConnection();
         if (connection != now) { reset("Server changed."); connection = now; }
         if (now == null) return;
-        if (++ticks % 100 == 20 && !index && pending.isEmpty() && ClientPlayNetworking.canSend(WorldPayload.TYPE)) {
+        // The client-only dev switch pretends the hooks aren't there.
+        if (!Backend.CLIENT_ONLY && ++ticks % 100 == 20 && !index && pending.isEmpty() && ClientPlayNetworking.canSend(WorldPayload.TYPE)) {
             request(Nbt.compound().put("op", "hello"), reply -> {
                 if (!reply.getString("op", "").equals("hello") || reply.getLong("version", 0) != Wire.VERSION) return;
                 index = reply.getLong("index", 0) != 0; apply = reply.getLong("apply", 0) != 0; tags = reply.getLong("tags", 0) != 0;

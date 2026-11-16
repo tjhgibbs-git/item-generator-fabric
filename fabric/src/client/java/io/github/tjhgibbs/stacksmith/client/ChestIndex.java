@@ -51,9 +51,6 @@ public final class ChestIndex {
     static long indexedAt;
     private static Object world;
     private static int generation;
-    private static final Deque<BlockPos> pending = new ArrayDeque<>();
-    private static boolean reading;
-    private static long deadline;
     private static int unread;
 
     static String dimension() {
@@ -87,8 +84,7 @@ public final class ChestIndex {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || !dimension().equals(entry.dimension()) || busy) return;
         BlockEntity be = mc.level.getBlockEntity(entry.pos());
-        if (!supported(be) || !Delivery.canUse("data") || reading || SpawnerBatch.searching())
-            return;
+        if (!supported(be) || !Delivery.canUse("data")) return;
         WorldSpawner.read(
                 be,
                 data -> {
@@ -101,8 +97,12 @@ public final class ChestIndex {
 
     /** Scans once per world: the World tab's container list calls this when it opens. */
     static void ensure() {
-        if (!indexed && !busy) start();
+        if (busy) return;
+        // Read from loaded chunks, the list is of the dimension it was read in: travelling means reading again.
+        if (!indexed || loadedOnly() && Minecraft.getInstance().level != null && !dimension().equals(scannedDimension)) start();
     }
+
+    private static String scannedDimension;
 
     /** A verified write: the list shows the new contents without a rescan. */
     static void recordUpdated(Entry previous, Nbt.Compound data) {
@@ -125,11 +125,8 @@ public final class ChestIndex {
 
     static void start() {
         Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null || busy || SpawnerBatch.searching()) return;
-        Object current =
-                mc.getSingleplayerServer() != null
-                        ? mc.getSingleplayerServer()
-                        : mc.getConnection();
+        if (mc.level == null || busy) return;
+        Object current = Backend.world();
         if (world != current) {
             entries.clear();
             world = current;
@@ -140,8 +137,8 @@ public final class ChestIndex {
         busy = true;
         unread = 0;
         status = "Reading saved chunks…";
-        if (mc.getSingleplayerServer() != null) {
-            Path root = mc.getSingleplayerServer().getWorldPath(LevelResource.ROOT);
+        if (Backend.host() != null) {
+            Path root = Backend.host().getWorldPath(LevelResource.ROOT);
             CompletableFuture.supplyAsync(() -> scan(root))
                     .whenComplete(
                             (result, error) ->
@@ -166,8 +163,8 @@ public final class ChestIndex {
         }
         // Integrated server: full, current inventory data, including chunks changed since disk
         // save.
-        if (mc.getSingleplayerServer() != null) {
-            var server = mc.getSingleplayerServer();
+        if (Backend.host() != null) {
+            var server = Backend.host();
             int gen = generation;
             server.execute(
                     () -> {
@@ -233,8 +230,8 @@ public final class ChestIndex {
             return;
         }
         int cx = mc.player.blockPosition().getX() >> 4, cz = mc.player.blockPosition().getZ() >> 4;
-        int distance = mc.options.getEffectiveRenderDistance() + 1;
-        pending.clear();
+        int distance = Backend.loadedReach() / 16 + 1;
+        List<BlockPos> pending = new ArrayList<>();
         for (int x = cx - distance; x <= cx + distance; x++)
             for (int z = cz - distance; z <= cz + distance; z++) {
                 if (mc.level.getChunkSource().getChunk(x, z, ChunkStatus.FULL, false)
@@ -242,62 +239,50 @@ public final class ChestIndex {
                     for (BlockEntity be : chunk.getBlockEntities().values())
                         if (supported(be)) pending.add(be.getBlockPos().immutable());
             }
-        tick();
+        // Only this dimension's loaded chunks can be read: what was listed elsewhere is dropped.
+        String dim = dimension();
+        scannedDimension = dim;
+        entries.clear();
+        reach = Backend.loadedReach();
+        if (pending.isEmpty()) { finish(); return; }
+        int gen = generation;
+        int[] left = {pending.size()};
+        status = "Reading loaded containers… " + left[0] + " left";
+        for (BlockPos pos : pending)
+            BlockReads.read(pos, () -> gen == generation && dim.equals(Backend.dimension()), tag -> {
+                if (gen != generation) return;
+                BlockEntity be = mc.level == null || !dim.equals(Backend.dimension()) ? null : mc.level.getBlockEntity(pos);
+                if (tag != null && supported(be)) {
+                    try {
+                        Entry e = entry(be, tag);
+                        entries.put(e.key(), e);
+                    } catch (RuntimeException ex) { unread++; }
+                } else unread++;
+                status = "Reading loaded containers… " + (--left[0]) + " left";
+                if (left[0] == 0) finish();
+            });
+    }
+
+    /** How far around you a client-read list reaches, in blocks. */
+    static int reach;
+
+    /** Whether the list is only the loaded chunks around you (no world of ours to read). */
+    static boolean loadedOnly() {
+        return Backend.host() == null;
     }
 
     static void tick() {
         Minecraft mc = Minecraft.getInstance();
-        if (world != null
-                && world
-                        != (mc.getSingleplayerServer() != null
-                                ? mc.getSingleplayerServer()
-                                : mc.getConnection())) {
+        if (world != null && world != Backend.world()) {
             generation++;
             entries.clear();
-            pending.clear();
             indexed = false;
             version++;
             busy = false;
-            reading = false;
             world = null;
             Session.chestLink = null;
         }
-        if (world == null && mc.level != null)
-            world =
-                    mc.getSingleplayerServer() != null
-                            ? mc.getSingleplayerServer()
-                            : mc.getConnection();
-        if (!busy || mc.getSingleplayerServer() != null) return;
-        if (reading) {
-            if (System.currentTimeMillis() < deadline) return;
-            reading = false;
-            unread++;
-        }
-        if (pending.isEmpty()) {
-            finish();
-            return;
-        }
-        BlockPos pos = pending.poll();
-        BlockEntity be = mc.level == null ? null : mc.level.getBlockEntity(pos);
-        if (!supported(be)) return;
-        reading = true;
-        deadline = System.currentTimeMillis() + 3000;
-        int gen = generation;
-        mc.getConnection()
-                .getDebugQueryHandler()
-                .queryBlockEntityTag(
-                        pos,
-                        tag ->
-                                mc.execute(
-                                        () -> {
-                                            if (gen != generation) return;
-                                            if (tag != null) {
-                                                Entry e = entry(be, McNbt.fromGame(tag));
-                                                entries.put(e.key(), e);
-                                            } else unread++;
-                                            reading = false;
-                                        }));
-        status = "Reading loaded containers… " + pending.size() + " left";
+        if (world == null && mc.level != null) world = Backend.world();
     }
 
     private static void finish() {
@@ -308,7 +293,7 @@ public final class ChestIndex {
         status =
                 entries.size()
                         + " containers indexed · "
-                        + (Minecraft.getInstance().getSingleplayerServer() != null
+                        + (Backend.host() != null
                                 ? "saved world + loaded chunks"
                                 : "loaded chunks only; re-index after exploring")
                         + (unread > 0 ? " · " + unread + " chunks/queries unread" : "");

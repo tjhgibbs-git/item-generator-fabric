@@ -33,8 +33,14 @@ public final class CommandQueue {
     private static long quietUntil;
 
     static void register() {
-        ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) -> !(System.currentTimeMillis() < quietUntil
-                && message.getContents() instanceof TranslatableContents t && ROUTINE.contains(t.getKey())));
+        ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) -> !(System.currentTimeMillis() < quietUntil && routine(message)));
+    }
+
+    /** A routine reply; a failed command's comes wrapped in a red, otherwise empty, component. */
+    private static boolean routine(net.minecraft.network.chat.Component message) {
+        if (message.getContents() instanceof TranslatableContents t) return ROUTINE.contains(t.getKey());
+        return message.getContents() == net.minecraft.network.chat.contents.PlainTextContents.EMPTY
+                && message.getSiblings().size() == 1 && routine(message.getSiblings().getFirst());
     }
 
     /** Queues {@code commands}; {@code done} (may be null) runs once the last of them is sent. */

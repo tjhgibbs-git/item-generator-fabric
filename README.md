@@ -6,9 +6,11 @@ already have, see the real tooltip and the mob as it will look, and get the resu
 in your inventory, a `/give`, a `/setblock`, or a command block that builds the spawner by
 itself the moment you place it.
 
-The same Fabric JAR works on clients and servers. Client-only installation supports the editors,
-creative items and vanilla commands. Optional installation on a Fabric server adds whole-world
-spawner discovery, verified bulk editing and datapack tag scanning. See [Server setup](docs/SERVERS.md).
+The same Fabric JAR works on clients and servers. Installed on your client only, it does nearly
+everything on any server where you're op: the editors, creative items, and the World tab's lists
+and bulk edits for the chunks loaded around you, by ordinary commands. Installed on a Fabric server
+as well, it adds whole-world discovery, far-away edits, server-side undo and datapack tag scanning.
+See [Server setup](docs/SERVERS.md).
 
 ## Status
 
@@ -120,8 +122,8 @@ tags: [legendary, bound]
   spawner with a tick box (untick any; **Identical** ticks only the ones set up exactly like this
   one), and a button that counts what will really be written. Only what you changed is written;
   each spawner keeps its other settings and its countdown. **↺ Undo** afterwards puts them back. On a
-  server without Stacksmith's hooks it looks in loaded chunks within 128 blocks and writes with
-  commands (not checked, no undo). Needs op, like saving.
+  server without Stacksmith it finds them in the chunks loaded around you (see the World tab).
+  Needs op, like saving.
 - **Right:** the mob, rendered wearing its gear, and:
   - **Save this spawner** (green, when the tab is tied to a block; the line under it says
     whether you have unsaved changes, and that it is only this one) or **Place where I look**
@@ -151,8 +153,8 @@ tags: [legendary, bound]
 
 ### World tab: every spawner in the world
 
-For building a map with lots of spawners (singleplayer, a world you host on LAN, or a Fabric server
-with compatible Stacksmith world hooks). Opening it
+For building a map with lots of spawners. In singleplayer, a world you host on LAN, or on a Fabric
+server with Stacksmith installed, opening it
 lists every spawner in every dimension, grouped by **kind**: the same mobs with the same gear and
 data. Each kind shows its spawn egg, what sets it apart ("Zombie · Iron Sword, Iron Helmet",
 "Boom Bob · Creeper, powered", pool weights), how many there are, and **N setups** when copies
@@ -182,9 +184,17 @@ Hover a kind for its full mobs and settings.
   nothing else changes, and Undo brings the countdowns back.
 - **Search** matches mob names, nicknames, gear and data, dimensions and coordinates; a search
   that only matches locations opens those kinds. **All dimensions** switches to one dimension.
+  **Any distance** switches to *Within 32 / 64 / 128 / 256* blocks of where you stand, for working
+  on the bit of the map you're in. Edit all and Prime all act on what is listed.
 - The list is read from the saved world plus the loaded chunks (spawners near you are always
   current). **Rescan** saves the world and re-reads the regions that changed; it never loads or
   generates chunks. The result is cached per world.
+- **On a server without Stacksmith** (vanilla, Paper, or Fabric without the mod; you need op) the
+  list is the spawners in the chunks loaded around you, in your dimension, read one by one with
+  `/data`; it says **Loaded chunks only**, and is read again when you change dimension or press
+  **Rescan**. Edit all, Prime all and Also change the others work the same way from there: each
+  spawner is read fresh (one changed since the list was made is left alone), changed with
+  commands, then read back to check. **↺ Undo** works too, until you leave the server.
 
 #### Containers
 
@@ -200,9 +210,11 @@ chest, barrel and shulker box the same way.
   opens it in the item editor and then puts the edited item in all of those containers, each
   stack keeping its size and slot. This is the way to buff or nerf an item across a map.
 - Both go through a review with a tick box per container, are checked against what the scan saw,
-  read back after writing, and can be undone. Editing many at once needs a world you're running
-  (singleplayer or LAN host); on a server the list covers loaded chunks and you edit one at a
-  time. Items inside shulker boxes inside containers aren't listed separately.
+  read back after writing, and can be undone. In a world you're running (singleplayer or LAN host)
+  the list covers the whole saved world; on a server it covers the chunks loaded around you
+  (**Loaded chunks only**), and Edit all and Edit item change those with commands, never breaking
+  the block (nothing drops). The distance filter works as for spawners. Items inside shulker
+  boxes inside containers aren't listed separately.
 - **Drop loot table** in the container editor turns a loot chest into an ordinary one so its
   contents can be set.
 
@@ -259,8 +271,8 @@ tabs, and the spawner's stepwise save.
 ### Servers
 
 Install the same JAR on a Fabric server to enable the optional world features. The client
-negotiates support after joining; World and Scan datapacks are greyed out on vanilla servers
-and Fabric servers without compatible hooks. Ordinary editors and nearby tools remain usable.
+negotiates support after joining and uses them whenever they're there. Without them the World tab
+works on the chunks loaded around you, by commands (op needed), and Scan datapacks is greyed out.
 See [Server setup](docs/SERVERS.md) for behavior, limits and testing.
 
 - **Get item** puts the item in your inventory the way the creative menu does, so it works on

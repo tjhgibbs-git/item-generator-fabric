@@ -1,5 +1,6 @@
 package io.github.tjhgibbs.stacksmith.client;
 
+import io.github.tjhgibbs.stacksmith.core.command.Commands;
 import io.github.tjhgibbs.stacksmith.core.container.ChestSpec;
 import io.github.tjhgibbs.stacksmith.core.nbt.Nbt;
 import io.github.tjhgibbs.stacksmith.mod.McNbt;
@@ -24,11 +25,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Gives several containers the same contents, in a world this game is running (singleplayer or
- * a LAN host): one at a time on the server thread, each checked against what the scan saw
- * before it is written and read back afterwards. Like {@link SpawnerWorldBatch}, it loads
- * far-away saved chunks for a moment but never generates terrain; unlike it, it doesn't travel
- * to containers next to unexplored terrain: those are skipped and listed.
+ * Gives several containers new contents, each checked against what the scan saw before it is
+ * written and read back afterwards. In a world this game is running (singleplayer or a LAN
+ * host) it works on the server thread and, like {@link SpawnerWorldBatch}, loads far-away saved
+ * chunks for a moment but never generates terrain (containers next to unexplored terrain are
+ * skipped and listed). Anywhere else it uses commands on the loaded containers in your
+ * dimension ({@link CommandRun}).
  */
 public final class ChestWorldBatch {
     private ChestWorldBatch() {}
@@ -48,12 +50,30 @@ public final class ChestWorldBatch {
     private static Object lastChangesWorld;
 
     static boolean available() {
-        return Minecraft.getInstance().getSingleplayerServer() != null;
+        return Backend.host() != null || Minecraft.getInstance().getConnection() != null;
+    }
+
+    /** No world of ours to work in: changes go out as commands, to loaded containers in your dimension. */
+    static boolean byCommands() {
+        return Backend.host() == null;
+    }
+
+    /** The last run (or the one running) was by commands. */
+    static volatile boolean lastByCommands;
+
+    /** How far the running update is, 0 to 1. */
+    static float progress() {
+        if (lastByCommands && busy) return CommandRun.progress();
+        return (completed + skipped + failed) / (float) Math.max(1, total);
+    }
+
+    static String status() {
+        return lastByCommands && busy ? CommandRun.status() : "";
     }
 
     public static boolean busy() {
         Run run = current;
-        if (run != null && Minecraft.getInstance().getSingleplayerServer() != run.server) {
+        if (run != null && Backend.host() != run.server) {
             run.cancelled = true;
             current = null;
             busy = false;
@@ -71,7 +91,8 @@ public final class ChestWorldBatch {
     }
 
     public static boolean canUndo() {
-        return !busy() && !lastChanges.isEmpty() && lastChangesWorld == Minecraft.getInstance().getSingleplayerServer();
+        // By commands the before-data is kept here, until you disconnect.
+        return !busy() && !lastChanges.isEmpty() && lastChangesWorld == Backend.world();
     }
 
     /** Puts back what the last update changed, wherever the container is still as that update left it. */
@@ -84,10 +105,10 @@ public final class ChestWorldBatch {
     }
 
     private static String start(List<ChestIndex.Entry> targets, Map<String, ChestSpec> edited, Map<String, Nbt.Compound> restore) {
-        MinecraftServer server = Minecraft.getInstance().getSingleplayerServer();
+        MinecraftServer server = Backend.host();
         if (busy() || SpawnerWorldBatch.busy() || CommandQueue.busy() || ChestIndex.busy || SpawnerIndex.busy)
             return "Wait for the current operation to finish.";
-        if (server == null) return "Changing many containers at once needs a world you're running (singleplayer or LAN host).";
+        if (server == null) return commandStart(targets, edited == null ? null : Map.copyOf(edited), restore);
         if (!Delivery.canUse("setblock")) return "Operator permission is needed.";
         if (targets.isEmpty()) return "No containers selected.";
         completed = skipped = failed = 0;
@@ -97,12 +118,85 @@ public final class ChestWorldBatch {
         Run run = new Run(server, List.copyOf(targets), edited == null ? null : Map.copyOf(edited), restore);
         current = run;
         busy = true;
+        lastByCommands = false;
         server.execute(run::next);
+        return null;
+    }
+
+    /**
+     * By commands: reads each container fresh (skipping any that changed since the scan),
+     * builds the new contents in command storage and merges them in (the block stays as it is,
+     * so nothing drops), then reads each back. Null means started; otherwise why not.
+     */
+    private static String commandStart(List<ChestIndex.Entry> targets, Map<String, ChestSpec> edited, Map<String, Nbt.Compound> restore) {
+        if (targets.isEmpty()) return "No containers selected.";
+        Object connection = Minecraft.getInstance().getConnection();
+        List<Undo> made = new ArrayList<>();
+        CommandRun.Job<ChestIndex.Entry> job = new CommandRun.Job<>() {
+            @Override public net.minecraft.core.BlockPos pos(ChestIndex.Entry t) { return t.pos(); }
+            @Override public String dimension(ChestIndex.Entry t) { return t.dimension(); }
+            @Override public boolean present(BlockEntity be) { return ChestIndex.supported(be); }
+
+            @Override public CommandRun.Plan plan(ChestIndex.Entry t, Nbt.Compound fresh) {
+                var level = Minecraft.getInstance().level;
+                BlockEntity be = level == null ? null : level.getBlockEntity(t.pos());
+                if (!ChestIndex.supported(be)) return new CommandRun.Skip("No container there any more");
+                String block = ChestIndex.block(be);
+                Nbt.Compound now = new ChestSpec(block, fresh).data();
+                if (!block.equals(t.chest().block()) || !now.equals(t.chest().data())) {
+                    if (block.equals(t.chest().block())) ChestIndex.recordUpdated(t, fresh);
+                    return new CommandRun.Skip(restore != null ? "Changed since the update, so left alone" : "Changed since the last scan, so left alone");
+                }
+                Nbt.Compound wanted = restore != null ? new ChestSpec(block, restore.get(t.key())).data() : edited.get(t.key()).data();
+                if (now.equals(wanted)) return new CommandRun.Already();
+                List<String> out = new ArrayList<>();
+                int limit = Commands.CHAT_LIMIT;
+                if (!Commands.writeStorage(Commands.STORAGE, "chest", wanted, limit - 1, out))
+                    return new CommandRun.Skip("An item in it is too long to send from chat");
+                // The old contents and loot table go; anything else the block had stays.
+                for (String key : now.keys()) {
+                    if (wanted.has(key)) continue;
+                    if (!key.matches("[A-Za-z0-9_]+")) return new CommandRun.Skip("Has data that can't be removed by command (" + key + ")");
+                    out.add("data remove block " + t.where() + " " + key);
+                }
+                out.add("data modify block " + t.where() + " {} merge from storage " + Commands.STORAGE + " chest");
+                out.add("data remove storage " + Commands.STORAGE + " chest");
+                if (out.stream().anyMatch(c -> c.length() + 1 > limit)) return new CommandRun.Skip("An item in it is too long to send from chat");
+                return new CommandRun.Write(out, after -> new ChestSpec(block, after).data().equals(wanted));
+            }
+
+            @Override public void missing(ChestIndex.Entry t) { ChestIndex.recordMissing(t); }
+            @Override public void skipped(ChestIndex.Entry t, String reason) { skipped++; problems.add(new Problem(t, reason)); }
+            @Override public void failed(ChestIndex.Entry t, String reason) { failed++; problems.add(new Problem(t, reason)); }
+            @Override public void already(ChestIndex.Entry t) { completed++; }
+
+            @Override public void written(ChestIndex.Entry t, Nbt.Compound before, Nbt.Compound after) {
+                completed++;
+                made.add(new Undo(new ChestIndex.Entry(t.dimension(), t.pos(), t.state(), new ChestSpec(t.chest().block(), after)), before.copy()));
+                ChestIndex.recordUpdated(t, after);
+            }
+
+            @Override public void finished(boolean cancelled) {
+                lastChanges = restore != null ? List.of() : List.copyOf(made);
+                lastChangesWorld = connection;
+                stopped = cancelled;
+                busy = false;
+            }
+        };
+        completed = skipped = failed = 0;
+        stopped = false;
+        problems.clear();
+        total = targets.size();
+        String why = CommandRun.start(job, targets);
+        if (why != null) return why;
+        busy = true;
+        lastByCommands = true;
         return null;
     }
 
     /** Stops future writes; changes already completed remain. */
     public static void cancel() {
+        if (lastByCommands && busy) { CommandRun.cancel(); return; }
         Run run = current;
         if (run != null) {
             run.cancelled = true;
@@ -133,7 +227,7 @@ public final class ChestWorldBatch {
         void fail(ChestIndex.Entry target, String reason) { failed++; problems.add(new Problem(target, reason)); }
 
         boolean active() {
-            return !cancelled && !finished && current == this && Minecraft.getInstance().getSingleplayerServer() == server;
+            return !cancelled && !finished && current == this && Backend.host() == server;
         }
 
         void next() {

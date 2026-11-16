@@ -40,6 +40,7 @@ public final class ChestApplyScreen extends StacksmithScreen {
     private Chip apply;
     private String error = "";
     private boolean undoing, undone;
+    private Chip stop;
     private static final int LIST_TOP = 78;
 
     /** Reviews giving every container of {@code group} the contents of {@code edited}. */
@@ -87,16 +88,21 @@ public final class ChestApplyScreen extends StacksmithScreen {
             addRenderableWidget(Chip.of(group.keepEditing() != null ? "‹ Back to editor" : "‹ Back to the list", 100, 20, this::onClose).at(x, bottom));
             apply = addRenderableWidget(Chip.of("", 170, 20, this::start).primary(0xFF2F7D46).at(x + w - 170, bottom));
             apply.tip("Writes this to each ticked container. Each stays the block it is, facing the same way. "
-                    + "Far-away ones are loaded for a moment; ones next to unexplored terrain are skipped and listed, "
-                    + "as is one changed since the last scan. You can undo afterwards.");
+                    + (ChestWorldBatch.byCommands()
+                    ? "Without a world of yours to work in, each one is read fresh, changed with commands, then read back to check; "
+                    + "only loaded containers in this dimension can be reached. One changed since the last scan is left alone and listed. "
+                    : "Far-away ones are loaded for a moment; ones next to unexplored terrain are skipped and listed, "
+                    + "as is one changed since the last scan. ")
+                    + "You can undo afterwards.");
             addRenderableWidget(Chip.of("None", 36, 14, () -> { group.entries().forEach(e -> excluded.add(e.key())); updateApply(); })
                     .at(x + w - 36, LIST_TOP - 16).tip("Untick every container"));
             addRenderableWidget(Chip.of("All", 26, 14, () -> { excluded.clear(); updateApply(); })
                     .at(x + w - 36 - 28, LIST_TOP - 16).tip("Tick every container"));
             updateApply();
         } else if (stage == Stage.RUNNING) {
-            addRenderableWidget(Chip.of("Stop", 70, 20, ChestWorldBatch::cancel).at(x + w - 70, bottom)
-                    .tip("Stops before the next container. Ones already updated stay updated."));
+            stop = addRenderableWidget(Chip.of("Stop", 70, 20, ChestWorldBatch::cancel).at(x + w - 70, bottom)
+                    .tip(ChestWorldBatch.lastByCommands ? "Stops while containers are still being read: nothing has been sent yet. Once the commands go out, it can't stop."
+                            : "Stops before the next container. Ones already updated stay updated."));
         } else {
             addRenderableWidget(Chip.of("Back to the list", 124, 20, () -> minecraft.setScreenAndShow(group.list()))
                     .primary(0xFF2E5E8C).at(x + w - 124, bottom));
@@ -110,6 +116,7 @@ public final class ChestApplyScreen extends StacksmithScreen {
                 Chip undo = addRenderableWidget(Chip.of("↺ Undo", 60, 20, this::undo).at(bx, bottom));
                 undo.active = ChestWorldBatch.canUndo();
                 undo.tip(undo.active ? "Put every container this changed back as it was. One changed again since then is left alone."
+                        + (ChestWorldBatch.lastByCommands ? " What to put back is kept in this game: leaving the server forgets it." : "")
                         : "Nothing was changed");
             }
         }
@@ -145,6 +152,7 @@ public final class ChestApplyScreen extends StacksmithScreen {
     public void tick() {
         super.tick();
         if (stage == Stage.REVIEW) updateApply();
+        if (stage == Stage.RUNNING && stop != null) stop.active = !ChestWorldBatch.lastByCommands || CommandRun.canStop();
         if (stage == Stage.RUNNING && !ChestWorldBatch.busy()) {
             stage = Stage.DONE;
             if (undoing) { undoing = false; undone = true; }
@@ -245,18 +253,19 @@ public final class ChestApplyScreen extends StacksmithScreen {
             g.text(font, font.plainSubstrByWidth("Now:  " + group.now(), w), x, y, Theme.TEXT_DIM, false);
             g.text(font, font.plainSubstrByWidth("After:  " + group.after(), w), x, y + 12, Theme.GOOD, false);
             int go = selected().size();
-            g.text(font, "Goes to " + go + " of " + group.entries().size(), x, LIST_TOP - 13, Theme.TEXT, false);
+            g.text(font, "Goes to " + go + " of " + group.entries().size()
+                    + (ChestWorldBatch.byCommands() ? " · loaded chunks in this dimension only" : ""), x, LIST_TOP - 13, Theme.TEXT, false);
             g.fill(x, LIST_TOP - 2, x + w, LIST_TOP - 1, Theme.BORDER);
         } else {
             boolean running = stage == Stage.RUNNING;
             int done = ChestWorldBatch.completed + ChestWorldBatch.skipped + ChestWorldBatch.failed;
             int total = Math.max(1, ChestWorldBatch.total);
             g.fill(x, y, x + w, y + 8, 0xFF1C232A);
-            g.fill(x, y, x + w * done / total, y + 8, running ? 0xFF5C8DBF : 0xFF2F7D46);
+            g.fill(x, y, x + (int) (w * (running ? ChestWorldBatch.progress() : 1)), y + 8, running ? 0xFF5C8DBF : 0xFF2F7D46);
             g.outline(x, y, w, 8, Theme.BORDER);
             y += 16;
             if (running) {
-                g.text(font, (undoing ? "Putting back " : "Updating ") + done + " of " + total + "…", x, y, Theme.TEXT, false);
+                g.text(font, ChestWorldBatch.lastByCommands ? ChestWorldBatch.status() : (undoing ? "Putting back " : "Updating ") + done + " of " + total + "…", x, y, Theme.TEXT, false);
             } else {
                 int ok = ChestWorldBatch.completed, skipped = ChestWorldBatch.skipped, failed = ChestWorldBatch.failed;
                 String okText = undone ? "↺ " + ok + " put back as " + (ok == 1 ? "it was" : "they were") : "✔ " + ok + " updated";
@@ -265,8 +274,13 @@ public final class ChestApplyScreen extends StacksmithScreen {
                 if (skipped > 0) { g.text(font, skipped + " skipped", cx, y, Theme.WARN, false); cx += font.width(skipped + " skipped") + 14; }
                 if (failed > 0) g.text(font, failed + " failed", cx, y, Theme.BAD, false);
                 y += 14;
-                String note = ChestWorldBatch.stopped ? "Stopped: the rest were left as they were. " : ChestWorldBatch.problems.isEmpty() ? "All done. " : "";
-                g.text(font, font.plainSubstrByWidth(note + "Changes are saved with the world as usual.", w), x, y, Theme.TEXT_DIM, false);
+                String note = (ChestWorldBatch.stopped ? "Stopped: the rest were left as they were. " : ChestWorldBatch.problems.isEmpty() ? "All done. " : "")
+                        + (ChestWorldBatch.lastByCommands ? "Sent as commands and read back to check. " : "");
+                int ly = y;
+                for (var line : font.split(Component.literal(note + "Changes are saved with the world as usual."), w)) {
+                    g.text(font, line, x, ly, Theme.TEXT_DIM, false);
+                    ly += 10;
+                }
                 if (!ChestWorldBatch.problems.isEmpty()) g.text(font, undone ? "Not put back:" : "Not updated:", x, y + 26, Theme.TEXT_DIM, false);
             }
         }

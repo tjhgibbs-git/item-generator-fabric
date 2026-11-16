@@ -3,7 +3,30 @@
 Written 2026-11-16. Read this with [SPAWNER_BULK_FLOW.md](SPAWNER_BULK_FLOW.md) (top section),
 [CHESTS.md](CHESTS.md) (top section) and [SERVERS.md](SERVERS.md).
 
-## Where things stand
+## Status (later on 2026-11-16): done, except a real server
+
+Items 1 to 5 below are implemented on branch `world-bulk-flow` and merged into `26.3`:
+
+- `Backend` picks host → hooks → commands at each use; `-Dstacksmith.clientOnly=true` forces the
+  command path (also hides the hooks) for testing in singleplayer.
+- `BlockReads` is the one queue for every block query of the mod (scans, loads, read-backs).
+- `CommandRun` is the client executor shared by spawners and containers: read fresh, skip changed,
+  send through `CommandQueue`, wait, read back. It reads back automatically, so there is no separate
+  **Check** button: the result counts already say what the server really holds.
+- `SpawnerIndex` has the client backend (loaded chunks, current dimension, rebuilt when the
+  dimension or backend changes); `SpawnerBatch` is deleted.
+- `SpawnerWorldBatch` / `ChestWorldBatch` have command branches for apply, prime and undo.
+- Distance filter on both World lists, from your live position, capped at the loaded area on the
+  client path; remembered per world.
+- Failed routine command replies (red "Nothing changed") are now kept out of chat too.
+
+Tested in a dev client with the switch on (spawners: Edit all with the filter, Undo, Prime with a
+target changed behind its back, Prime's Undo, Also change the others; containers: Edit item across
+chest and barrel, Undo, Drop loot table on two loot chests), each result checked with `/data get`;
+and without the switch (Edit all and Undo, both lists). **Not tested:** a real vanilla/Paper server,
+and a client against a dedicated server with hooks for Undo/Prime.
+
+## Where things stood before (kept for context)
 
 The 2026-11-16 session reworked the world/bulk flow (scope bar, one review screen, undo, mixed
 fields, containers in the World tab, By item, Prime all). `./gradlew build` passes with 22 game

@@ -44,6 +44,8 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
     private static Object stateWorld;
     private static String query = "";
     private static String dimension;
+    /** Only what is within this many blocks of you (0: any distance). */
+    private static int near;
     private static final Set<String> open = new HashSet<>();
     private static double scroll;
     private static String lastVisited;
@@ -54,7 +56,7 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
     private static final int TOP = 24;
     private final ScrollPane list = pane(new ScrollPane());
     private EditBox search;
-    private Chip rescan, dimChip, expandAll, viewChip;
+    private Chip rescan, dimChip, nearChip, expandAll, viewChip;
     private List<Group> groups = List.of();
     private int total, kinds;
     private Map<String, Integer> perDimension = new TreeMap<>();
@@ -68,11 +70,12 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
 
     public ContainerWorldScreen(Screen parent) {
         super(Component.literal("World containers"), parent);
-        Object world = minecraft().getSingleplayerServer() != null ? minecraft().getSingleplayerServer() : minecraft().getConnection();
+        Object world = Backend.world();
         if (world != stateWorld) {
             stateWorld = world;
             query = "";
             dimension = null;
+            near = 0;
             open.clear();
             scroll = 0;
             lastVisited = null;
@@ -97,15 +100,15 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
         header(Tab.WORLD, null, null, null, null, null);
         worldSwitch(true);
         int x = innerX(), w = innerW();
-        int rescanW = 62, dimW = 92, viewW = 74;
-        search = addRenderableWidget(new EditBox(font, x, TOP + 4, w - rescanW - dimW - viewW - 12, 16, Component.literal("Search")));
+        int rescanW = 62, dimW = 80, viewW = 70, nearW = 72;
+        search = addRenderableWidget(new EditBox(font, x, TOP + 4, w - rescanW - dimW - viewW - nearW - 16, 16, Component.literal("Search")));
         search.setHint(Component.literal("Search items, loot, coordinates"));
         viewChip = addRenderableWidget(Chip.of("", viewW, 16, () -> {
             byItem = !byItem;
             open.clear();
             list.scroll(0);
             refilter();
-        }).at(x + w - rescanW - dimW - viewW - 8, TOP + 4).tip("By contents: one row per set of identical contents, to restock containers alike. "
+        }).at(x + w - rescanW - dimW - nearW - viewW - 12, TOP + 4).tip("By contents: one row per set of identical contents, to restock containers alike. "
                 + "By item: one row per item with every container that holds it, to find an item or change it everywhere."));
         search.setMaxLength(100);
         search.setValue(query);
@@ -115,6 +118,11 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
             list.scroll(0);
             refilter();
         });
+        nearChip = addRenderableWidget(Chip.of("", nearW, 16, () -> {
+            near = SpawnerWorldScreen.nextNear(near, ChestIndex.loadedOnly() && ChestIndex.reach > 0 ? ChestIndex.reach : Integer.MAX_VALUE);
+            list.scroll(0);
+            refilter();
+        }).at(x + w - rescanW - dimW - nearW - 8, TOP + 4));
         dimChip = addRenderableWidget(Chip.of("", dimW, 16, this::cycleDimension)
                 .at(x + w - rescanW - 4 - dimW, TOP + 4).tip("Which dimension to list. Click to switch."));
         rescan = addRenderableWidget(Chip.of("Rescan", rescanW, 16, () -> {
@@ -122,9 +130,9 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
             ChestIndex.start();
             updateChips();
         }).at(x + w - rescanW, TOP + 4));
-        rescan.tip(minecraft.getSingleplayerServer() != null
+        rescan.tip(Backend.host() != null
                 ? "Look for containers again: the saved world, plus the chunks loaded now."
-                : "Look again. On a server only the chunks loaded around you can be read (and that needs /data).");
+                : "Read the containers in the chunks loaded around you again (a server only lets a client see those). Rescan after moving to another area.");
         expandAll = addRenderableWidget(Chip.of("Open all", 70, 18, this::toggleAll).at(x, height - 25));
         addRenderableWidget(Chip.of("Done", 60, 18, this::onClose).at(x + w - 60, height - 25));
         list.bounds(x, listTop(), w, listBottom() - listTop());
@@ -132,7 +140,7 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
             started = true;
             ChestIndex.ensure();
             // The spawner index knows which chunks are fully generated: Edit all needs that to load far ones safely.
-            if (SpawnerIndex.available() && !SpawnerIndex.busy && !(SpawnerIndex.current() && SpawnerIndex.indexed)) SpawnerIndex.ensure(() -> {});
+            if (Backend.host() != null && !SpawnerIndex.busy && !(SpawnerIndex.current() && SpawnerIndex.indexed)) SpawnerIndex.ensure(() -> {});
         }
         regroup();
         if (!query.isEmpty() || groups.isEmpty()) focusSoon(search);
@@ -227,6 +235,7 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
             boolean kindMatches = SpawnerLog.matches((title + " " + detail + " " + found.getKey()).toLowerCase(Locale.ROOT), q);
             List<ChestIndex.Entry> shown = found.getValue().in().stream()
                     .filter(e -> dimension == null || e.dimension().equals(dimension))
+                    .filter(e -> SpawnerWorldScreen.within(e.dimension(), e.pos(), near))
                     .filter(e -> kindMatches || SpawnerLog.matches(locationText(e), q))
                     .sorted(nearestFirst())
                     .toList();
@@ -263,6 +272,7 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
             boolean kindMatches = SpawnerLog.matches((title + " " + detail + " " + kind.getKey()).toLowerCase(Locale.ROOT), q);
             List<ChestIndex.Entry> shown = all.stream()
                     .filter(e -> dimension == null || e.dimension().equals(dimension))
+                    .filter(e -> SpawnerWorldScreen.within(e.dimension(), e.pos(), near))
                     .filter(e -> kindMatches || SpawnerLog.matches(locationText(e), q))
                     .sorted(nearestFirst())
                     .toList();
@@ -323,8 +333,10 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
         if (rescan == null) return;
         rescan.setMessage(Component.literal(ChestIndex.busy ? "Scanning…" : "Rescan"));
         viewChip.setMessage(Component.literal(byItem ? "By item" : "By contents"));
-        rescan.active = !ChestIndex.busy && Delivery.inWorld() && !SpawnerBatch.searching() && !ChestWorldBatch.busy();
+        rescan.active = !ChestIndex.busy && Delivery.inWorld() && !ChestWorldBatch.busy();
         dimChip.setMessage(Component.literal(SpawnerWorldScreen.dimensionLabel(dimension)));
+        nearChip.setMessage(Component.literal(SpawnerWorldScreen.nearLabel(near)));
+        nearChip.tip(SpawnerWorldScreen.nearTip(ChestIndex.loadedOnly() ? ChestIndex.reach : 0));
         dimChip.active = perDimension.size() > 1 || dimension != null;
         boolean anyClosed = groups.stream().anyMatch(g -> !isOpen(g));
         expandAll.setMessage(Component.literal(anyClosed ? "Open all" : "Close all"));
@@ -404,7 +416,7 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
         if (shown != null && shown != this && !(shown instanceof net.minecraft.client.gui.screens.LevelLoadingScreen)
                 && !(shown instanceof net.minecraft.client.gui.screens.GenericMessageScreen)) return;
         if (minecraft.level != null && here().equals(e.dimension()) && ChestIndex.supported(minecraft.level.getBlockEntity(e.pos()))
-                && !ChestIndex.busy && !SpawnerBatch.searching()) {
+                && !ChestIndex.busy) {
             ChestIndex.load(e, fresh -> {
                 Session.chest = fresh.chest().copy();
                 Session.chestLink = fresh;
@@ -480,6 +492,8 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
             minecraft.setScreenAndShow(go);
             return;
         }
+        // Read from loaded chunks, the list is of one dimension: read again after travelling.
+        if (ChestIndex.indexed && !ChestIndex.busy && !ChestWorldBatch.busy()) ChestIndex.ensure();
         if (ChestIndex.version != shownVersion || ChestIndex.busy != shownBusy) regroup();
     }
 
@@ -504,7 +518,7 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
                 + kinds + (byItem ? (kinds == 1 ? " item" : " different items") : kinds == 1 ? " kind" : " kinds")
                 + (perDimension.size() > 1 ? " · " + perDimension.entrySet().stream()
                 .map(d -> SpawnerWorldScreen.dimensionLabel(d.getKey()) + " " + d.getValue()).collect(Collectors.joining(", ")) : "");
-        boolean local = minecraft.getSingleplayerServer() != null;
+        boolean local = !ChestIndex.loadedOnly();
         String state = ChestIndex.busy ? ChestIndex.status
                 : !ChestIndex.indexed ? ""
                 : (local ? "Scanned " : "Loaded chunks only · ") + SpawnerLog.ago(ChestIndex.indexedAt, System.currentTimeMillis());
@@ -521,7 +535,8 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
                     : total == 0 ? (ChestIndex.indexed ? "No chests, barrels or shulker boxes found" + (local ? " in this world yet." : " in the chunks loaded around you.")
                     : ChestIndex.status)
                     : "No containers match" + (query.isBlank() ? "" : " “" + query.strip() + "”")
-                    + (dimension == null ? "." : " in " + SpawnerWorldScreen.dimensionLabel(dimension) + ".");
+                    + (dimension == null ? "" : " in " + SpawnerWorldScreen.dimensionLabel(dimension))
+                    + (near == 0 ? "." : " within " + near + " blocks of you.");
             int ty = listTop() + 14;
             for (var line : font.split(Component.literal(empty), w - 20)) {
                 g.centeredText(font, line, x + w / 2, ty, Theme.TEXT_DIM);
@@ -565,19 +580,17 @@ public final class ContainerWorldScreen extends StacksmithScreen implements Stac
             edit = Chip.of(item ? "Edit item" : n == 1 ? "Edit" : "Edit all " + n, 66, 20, () -> {
                 if (n == 1 && !item) edit(g.entries().getFirst()); else editAll(g);
             });
-            boolean canAll = ChestWorldBatch.available() && Delivery.canUse("setblock");
+            boolean canAll = ChestWorldBatch.available() && Delivery.canUse("setblock") && Delivery.canUse("data");
             edit.active = n == 1 && !item ? Delivery.canUse("tp") && Delivery.canUse("data") : canAll;
+            String hidden = n < g.total() ? "\nOnly the " + n + " listed: " + (g.total() - n) + " more are hidden by the search or filters." : "";
+            String how = ChestWorldBatch.byCommands() ? "\nThey are changed with commands, then read back." : "";
             edit.setTooltip(Tooltip.create(Component.literal(item
-                    ? (!ChestWorldBatch.available() ? "Changing an item in many containers at once needs a world you're running (singleplayer or LAN host)."
-                    : "Open this item in the item editor (to buff or nerf it), then put the result in "
+                    ? "Open this item in the item editor (to buff or nerf it), then put the result in "
                     + (n == 1 ? "the container that holds it" : "all " + n + " containers that hold it")
-                    + ", without travelling. Each stack keeps its size and slot; you review the list first."
-                    + (n < g.total() ? "\nOnly the " + n + " listed: " + (g.total() - n) + " more are hidden by the search or dimension." : ""))
+                    + ", without travelling. Each stack keeps its size and slot; you review the list first." + hidden + how
                     : n == 1
                     ? "Go to this container and open it in the editor. Back brings you here."
-                    : !ChestWorldBatch.available() ? "Changing many containers at once needs a world you're running (singleplayer or LAN host). Here, edit them one at a time."
-                    : "Edit all " + n + " together, without travelling: set the contents once, review, and every one of them gets them."
-                    + (n < g.total() ? "\nOnly the " + n + " listed: " + (g.total() - n) + " more are hidden by the search or dimension." : ""))));
+                    : "Edit all " + n + " together, without travelling: set the contents once, review, and every one of them gets them." + hidden + how)));
         }
 
         @Override public int layout(int x, int y, int w) {

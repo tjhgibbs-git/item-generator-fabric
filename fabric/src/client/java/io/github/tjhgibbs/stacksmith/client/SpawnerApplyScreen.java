@@ -3,7 +3,6 @@ package io.github.tjhgibbs.stacksmith.client;
 import io.github.tjhgibbs.stacksmith.client.ui.Chip;
 import io.github.tjhgibbs.stacksmith.client.ui.ScrollPane;
 import io.github.tjhgibbs.stacksmith.client.ui.Theme;
-import io.github.tjhgibbs.stacksmith.core.command.Commands;
 import io.github.tjhgibbs.stacksmith.core.entity.SpawnerSpec;
 import io.github.tjhgibbs.stacksmith.core.preset.SpawnerLog;
 import net.minecraft.client.Minecraft;
@@ -37,8 +36,6 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
         private final Screen list;
         /** The spawner the editor is tied to, when this is "this one and the others like it"; else null. */
         final String sourceKey;
-        /** Found in loaded chunks and written with commands (a server without world hooks). */
-        final boolean nearby;
         /** Spawners unticked in the review: left alone. */
         final Set<String> excluded = new HashSet<>();
         /**
@@ -48,16 +45,15 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
         final EnumSet<SpawnerSpec.Setting> unify = EnumSet.noneOf(SpawnerSpec.Setting.class);
 
         public Targets(String name, SpawnerSpec base, List<SpawnerIndex.Entry> entries, Screen list) {
-            this(name, base, entries, list, null, false);
+            this(name, base, entries, list, null);
         }
 
-        Targets(String name, SpawnerSpec base, List<SpawnerIndex.Entry> entries, Screen list, String sourceKey, boolean nearby) {
+        Targets(String name, SpawnerSpec base, List<SpawnerIndex.Entry> entries, Screen list, String sourceKey) {
             this.name = name;
             this.base = base;
             this.entries = List.copyOf(entries);
             this.list = list;
             this.sourceKey = sourceKey;
-            this.nearby = nearby;
         }
 
         public String name() { return name; }
@@ -100,7 +96,7 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
         /** The same spawners with their data as now indexed (after an update), and {@code newBase} as the new starting point. */
         Targets refreshed(SpawnerSpec newBase) {
             List<SpawnerIndex.Entry> fresh = entries.stream().map(e -> SpawnerIndex.entries.get(e.key())).filter(Objects::nonNull).toList();
-            Targets out = new Targets(name, newBase, fresh, list, sourceKey, nearby);
+            Targets out = new Targets(name, newBase, fresh, list, sourceKey);
             out.excluded.addAll(excluded);
             return out;
         }
@@ -118,9 +114,8 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
     private Chip apply;
     private String error = "";
     private boolean undoing, undone;
-    /** Nearby: commands went out for this many (the server doesn't confirm them). */
-    private int sent = -1;
     private int listTop;
+    private Chip stop;
 
     // Finding the others like the linked spawner (from the editor).
     /** What to compare the edit against, and whose kind to look for. */
@@ -130,7 +125,6 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
     private final BlockPos sourcePos;
     private final String sourceDimension;
     private int findStep;
-    private boolean nearbyFound;
 
     /** Priming: only sets each spawner's countdown to 0 (the World tab's Prime all). */
     private boolean prime;
@@ -169,8 +163,8 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
     }
 
     /**
-     * From the editor on one spawner: finds the others of its kind (the world index, or loaded
-     * chunks nearby on a server without hooks), then reviews giving them, and this one, what
+     * From the editor on one spawner: finds the others of its kind (the World tab's list, which
+     * on a server without Stacksmith is the loaded chunks around you), then reviews giving them, and this one, what
      * was changed from {@code saved}. {@code held} is what this spawner's block holds now.
      */
     SpawnerApplyScreen(SpawnerEditorScreen editor, SpawnerSpec saved, SpawnerSpec held, SpawnerSpec edited, BlockPos pos, String dimension) {
@@ -233,8 +227,9 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
             buildRows();
             updateApply();
         } else if (stage == Stage.RUNNING) {
-            addRenderableWidget(Chip.of("Stop", 70, 20, SpawnerWorldBatch::cancel).at(x + w - 70, bottom)
-                    .tip("Stops before the next spawner. Ones already updated stay updated.")).active = !targets.nearby;
+            stop = addRenderableWidget(Chip.of("Stop", 70, 20, SpawnerWorldBatch::cancel).at(x + w - 70, bottom)
+                    .tip(SpawnerWorldBatch.lastByCommands ? "Stops while spawners are still being read: nothing has been sent yet. Once the commands go out, it can't stop."
+                            : "Stops before the next spawner. Ones already updated stay updated."));
         } else {
             boolean fromOne = targets.sourceKey != null;
             String back = fromOne ? "Back to this spawner" : "Back to the list";
@@ -245,10 +240,11 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
                         .tip("Back to the editor to change these spawners some more"));
                 bx += 88;
             }
-            if (!targets.nearby && !undone) {
+            if (!undone) {
                 Chip undo = addRenderableWidget(Chip.of("↺ Undo", 60, 20, this::undo).at(bx, bottom));
                 undo.active = SpawnerWorldBatch.canUndo();
                 undo.tip(undo.active ? "Put every spawner this changed back as it was. One changed again since then is left alone."
+                        + (SpawnerWorldBatch.lastByCommands ? " Without Stacksmith on the server, what to put back is kept in this game: leaving the server forgets it." : "")
                         : SpawnerWorldBatch.completed == 0 ? "Nothing was changed"
                         : "This server's Stacksmith can't undo: update it, or change the setting back and apply again");
             }
@@ -268,16 +264,19 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
         int n = writable().size();
         apply.setMessage(Component.literal(nothing() ? "Nothing to apply" : n == 0 ? "None selected" : (prime ? "Prime " : "Apply to ") + spawners(n)));
         apply.active = n > 0 && !nothing() && (prime ? SpawnerWorldBatch.canPrime() : edited.problems().isEmpty())
-                && (targets.nearby ? Delivery.canUse("setblock") && !CommandQueue.busy() : SpawnerWorldBatch.available());
+                && SpawnerWorldBatch.available() && Delivery.canUse("setblock");
+        String how = SpawnerWorldBatch.byCommands()
+                ? "Stacksmith isn't on this server, so each one is read fresh, changed with commands, then read back to check. "
+                + "Only loaded spawners in this dimension can be reached. "
+                : "";
         if (prime) {
-            apply.tip("Sets the countdown of each ticked spawner to 0 and changes nothing else. You can undo afterwards (their countdowns come back).");
+            apply.tip("Sets the countdown of each ticked spawner to 0 and changes nothing else. " + how
+                    + "You can undo afterwards (their countdowns come back).");
             return;
         }
-        apply.tip(targets.nearby
-                ? "Sends the commands for each ticked spawner. Each keeps its other settings and its countdown. "
-                + "This server has no Stacksmith hooks, so the result isn't checked and can't be undone here."
-                : "Writes these changes to each ticked spawner; everything else stays as each one has it. "
-                + (minecraft.getSingleplayerServer() != null
+        apply.tip("Writes these changes to each ticked spawner; everything else stays as each one has it. "
+                + (!how.isEmpty() ? how
+                : Backend.host() != null
                 ? "Far-away ones are loaded for a moment; next to unexplored terrain you may be taken there briefly and brought back. "
                 : "Far-away ones are loaded briefly; ones next to unexplored terrain are skipped. ")
                 + "One changed since the last scan is left alone and listed. You can undo afterwards.");
@@ -286,58 +285,40 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
     // ---- finding the others ----------------------------------------------------------------------
 
     private void find() {
-        if (SpawnerIndex.available()) {
-            if (SpawnerIndex.busy) return;
-            if (findStep == 0) {
-                // Refreshes the spawners in loaded chunks, this one included.
-                findStep = 1;
-                SpawnerIndex.ensure(() -> {});
-                return;
-            }
-            SpawnerIndex.Entry source = SpawnerIndex.entries.get(SpawnerIndex.key(sourceDimension, sourcePos));
-            boolean fresh = source != null && source.spec().sameAs(held);
-            if (!fresh && findStep == 1) {
-                // The index hasn't caught up with this spawner (just placed or saved): scan properly.
-                findStep = 2;
-                SpawnerIndex.start(() -> {});
-                return;
-            }
-            if (!SpawnerIndex.current() || !SpawnerIndex.indexed) {
-                error = "Couldn't scan the world: " + SpawnerIndex.status;
-                findStep = -1;
-                return;
-            }
-            List<SpawnerIndex.Entry> list = new ArrayList<>(SpawnerIndex.sameKind(saved));
-            // Already saved with different mobs, it is no longer of that kind, but still belongs here.
-            if (source != null && !list.contains(source)) list.add(source);
-            found(list, false);
-        } else {
-            if (findStep == 0) {
-                findStep = 1;
-                SpawnerBatch.radius = SpawnerBatch.MAX_RADIUS;
-                SpawnerBatch.search(() -> nearbyFound = true);
-                return;
-            }
-            if (!nearbyFound) {
-                if (!SpawnerBatch.searching()) { error = SpawnerBatch.status().isEmpty() ? "Couldn't read the spawners nearby." : SpawnerBatch.status(); findStep = -1; }
-                return;
-            }
-            String kind = SpawnerWorldScreen.mobsKey(saved);
-            List<SpawnerIndex.Entry> list = new ArrayList<>();
-            list.add(new SpawnerIndex.Entry(sourceDimension, sourcePos, held, held.toTag()));
-            SpawnerBatch.entries().stream().filter(e -> SpawnerWorldScreen.mobsKey(e.spec()).equals(kind)).forEach(list::add);
-            found(list, true);
+        if (SpawnerIndex.busy) return;
+        if (findStep == 0) {
+            // Refreshes the spawners in loaded chunks, this one included.
+            findStep = 1;
+            SpawnerIndex.ensure(() -> {});
+            return;
         }
+        SpawnerIndex.Entry source = SpawnerIndex.entries.get(SpawnerIndex.key(sourceDimension, sourcePos));
+        boolean fresh = source != null && source.spec().sameAs(held);
+        if (!fresh && findStep == 1) {
+            // The index hasn't caught up with this spawner (just placed or saved): scan properly.
+            findStep = 2;
+            SpawnerIndex.start(() -> {});
+            return;
+        }
+        if (!SpawnerIndex.current() || !SpawnerIndex.indexed) {
+            error = "Couldn't scan the world: " + SpawnerIndex.status;
+            findStep = -1;
+            return;
+        }
+        List<SpawnerIndex.Entry> list = new ArrayList<>(SpawnerIndex.sameKind(saved));
+        // Already saved with different mobs, it is no longer of that kind, but still belongs here.
+        if (source != null && !list.contains(source)) list.add(source);
+        found(list);
     }
 
-    private void found(List<SpawnerIndex.Entry> list, boolean nearby) {
+    private void found(List<SpawnerIndex.Entry> list) {
         String sourceKey = SpawnerIndex.key(sourceDimension, sourcePos);
         list.sort(Comparator.comparing((SpawnerIndex.Entry e) -> !e.key().equals(sourceKey))
                 .thenComparing(e -> !e.dimension().equals(sourceDimension))
                 .thenComparing(SpawnerIndex.Entry::dimension)
                 .thenComparingDouble(e -> e.pos().distSqr(sourcePos)));
         String nick = SpawnerLibrary.starredName(saved);
-        targets = new Targets(nick != null ? nick : SpawnerLog.title(saved), saved, list, parent, sourceKey, nearby);
+        targets = new Targets(nick != null ? nick : SpawnerLog.title(saved), saved, list, parent, sourceKey);
         changes = targets.changes(edited);
         stage = Stage.REVIEW;
         rebuildWidgets();
@@ -347,16 +328,9 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
 
     private void start() {
         List<SpawnerIndex.Entry> go = writable();
-        if (targets.nearby) {
-            int n = go.size();
-            String why = SpawnerBatch.applyChanges(go, edited, changes, new Commands.Style(Session.briefCommands, Session.target), () -> sent = n);
-            if (why != null) { error = why; return; }
-            SpawnerWorldBatch.problems.clear();
-        } else {
-            if (SpawnerIndex.busy) { error = "Still scanning the world; try again in a moment."; return; }
-            String why = prime ? SpawnerWorldBatch.startPrime(go) : SpawnerWorldBatch.startChanges(go, targets.diffBase(edited), edited);
-            if (why != null) { error = why; return; }
-        }
+        if (SpawnerIndex.busy) { error = "Still scanning the world; try again in a moment."; return; }
+        String why = prime ? SpawnerWorldBatch.startPrime(go) : SpawnerWorldBatch.startChanges(go, targets.diffBase(edited), edited);
+        if (why != null) { error = why; return; }
         if (!prime) SpawnerLibrary.record(edited, "Applied to " + spawners(go.size()), null);
         error = "";
         stage = Stage.RUNNING;
@@ -414,7 +388,8 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
         super.tick();
         if (stage == Stage.FINDING && findStep >= 0) find();
         if (stage == Stage.REVIEW) updateApply();
-        if (stage == Stage.RUNNING && (targets.nearby ? sent >= 0 : !SpawnerWorldBatch.busy())) {
+        if (stage == Stage.RUNNING && stop != null) stop.active = !SpawnerWorldBatch.lastByCommands || CommandRun.canStop();
+        if (stage == Stage.RUNNING && !SpawnerWorldBatch.busy()) {
             stage = Stage.DONE;
             if (undoing) { undoing = false; undone = true; }
             rebuildWidgets();
@@ -586,8 +561,7 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
         g.text(font, font.plainSubstrByWidth(title, w), x, 13, 0xFFFFFFFF, false);
         int y = 34;
         if (stage == Stage.FINDING) {
-            wrap(g, error.isEmpty() ? (SpawnerIndex.available() ? SpawnerIndex.status
-                    : "Reading the spawners in loaded chunks within " + SpawnerBatch.MAX_RADIUS + " blocks… " + SpawnerBatch.status()) : "", y, Theme.TEXT_DIM);
+            wrap(g, error.isEmpty() ? SpawnerIndex.status : "", y, Theme.TEXT_DIM);
         } else if (stage == Stage.REVIEW) {
             if (nothing()) {
                 wrap(g, "You haven't changed anything yet. Go back to the editor, change what these spawners should have, then come back.", y, Theme.TEXT_DIM);
@@ -595,24 +569,22 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
                 for (String line : changeLines()) y = wrap(g, "•  " + line, y, Theme.GOOD) + 2;
                 int ticked = targets.selected().size(), go = writable().size(), all = targets.entries().size();
                 String head = "Goes to " + go + " of " + all + (ticked > go ? " · " + (ticked - go) + " skipped" : "")
-                        + (targets.nearby ? " · loaded chunks nearby only" : "");
+                        + (SpawnerWorldBatch.byCommands() ? " · loaded chunks in this dimension only" : "");
                 g.text(font, font.plainSubstrByWidth(head, w - 130), x, listTop - 13, ticked > go ? Theme.WARN : Theme.TEXT, false);
                 g.fill(x, listTop - 2, x + w, listTop - 1, Theme.BORDER);
             }
         } else {
             boolean running = stage == Stage.RUNNING;
-            if (targets.nearby) {
-                wrap(g, running ? "Sending commands…" : "Commands sent for " + spawners(Math.max(0, sent)) + ". This server has no Stacksmith hooks, "
-                        + "so the result isn't checked: look at one to make sure.", y, running ? Theme.TEXT : Theme.GOOD);
-            } else {
+            {
+                boolean commands = SpawnerWorldBatch.lastByCommands;
                 int done = SpawnerWorldBatch.completed + SpawnerWorldBatch.skipped + SpawnerWorldBatch.failed;
                 int total = Math.max(1, SpawnerWorldBatch.total);
                 g.fill(x, y, x + w, y + 8, 0xFF1C232A);
-                g.fill(x, y, x + w * done / total, y + 8, running ? 0xFF5C8DBF : 0xFF2F7D46);
+                g.fill(x, y, x + (int) (w * (running ? SpawnerWorldBatch.progress() : 1)), y + 8, running ? 0xFF5C8DBF : 0xFF2F7D46);
                 g.outline(x, y, w, 8, Theme.BORDER);
                 y += 16;
                 if (running) {
-                    g.text(font, SpawnerWorldBatch.status().startsWith("Visiting") ? SpawnerWorldBatch.status()
+                    g.text(font, commands || SpawnerWorldBatch.status().startsWith("Visiting") ? SpawnerWorldBatch.status()
                             : (undoing ? "Putting back " : "Updating ") + done + " of " + total + "…", x, y, Theme.TEXT, false);
                 } else {
                     int ok = SpawnerWorldBatch.completed, skipped = SpawnerWorldBatch.skipped, failed = SpawnerWorldBatch.failed;
@@ -626,13 +598,16 @@ public final class SpawnerApplyScreen extends StacksmithScreen {
                     if (failure != null) {
                         // The server refused or the connection ended: say why rather than "All done".
                         wrap(g, failure, y, Theme.BAD);
-                    } else if (!SpawnerWorldBatch.problems.isEmpty()) {
-                        g.text(font, undone ? "Not put back:" : "Not updated:", x, y + 26, Theme.TEXT_DIM, false);
-                        wrap(g, "Changes are saved with the world as usual.", y, Theme.TEXT_FAINT);
-                    } else if (SpawnerWorldBatch.status.startsWith("Stopped")) {
-                        wrap(g, "Stopped: the rest were left as they were. Changes are saved with the world as usual.", y, Theme.TEXT_DIM);
                     } else {
-                        wrap(g, "All done. Changes are saved with the world as usual.", y, Theme.TEXT_DIM);
+                        String how = commands ? "Sent as commands, then read back from the server to check. " : "";
+                        if (!SpawnerWorldBatch.problems.isEmpty()) {
+                            g.text(font, undone ? "Not put back:" : "Not updated:", x, y + 26, Theme.TEXT_DIM, false);
+                            wrap(g, how + "Changes are saved with the world as usual.", y, Theme.TEXT_FAINT);
+                        } else if (SpawnerWorldBatch.status.startsWith("Stopped")) {
+                            wrap(g, "Stopped: the rest were left as they were. Changes are saved with the world as usual.", y, Theme.TEXT_DIM);
+                        } else {
+                            wrap(g, "All done. " + how + "Changes are saved with the world as usual.", y, Theme.TEXT_DIM);
+                        }
                     }
                 }
             }

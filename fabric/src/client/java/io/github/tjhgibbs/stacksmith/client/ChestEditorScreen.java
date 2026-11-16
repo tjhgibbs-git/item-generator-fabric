@@ -179,8 +179,7 @@ public final class ChestEditorScreen extends StacksmithScreen {
             load.active =
                     ChestIndex.supported(WorldSpawner.lookedAtBlockEntity())
                             && Delivery.canUse("data")
-                            && !ChestIndex.busy
-                            && !SpawnerBatch.searching();
+                            && !ChestIndex.busy;
             if (Session.chestLink != null)
                 addRenderableWidget(
                         Chip.of(

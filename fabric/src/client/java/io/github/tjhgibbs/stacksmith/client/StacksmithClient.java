@@ -20,7 +20,8 @@ public final class StacksmithClient implements ClientModInitializer {
         ServerHooks.register();
         ClientTickEvents.END_CLIENT_TICK.register(mc -> {
             ServerHooks.tick();
-            SpawnerBatch.tick();
+            BlockReads.tick();
+            CommandRun.tick();
             ChestIndex.tick();
             CommandQueue.tick();
             RangeView.tick();
@@ -30,7 +31,7 @@ public final class StacksmithClient implements ClientModInitializer {
                 // Looking at a spawner: edit that spawner. Otherwise the tab used last.
                 net.minecraft.core.BlockPos spawner = WorldSpawner.lookedAtSpawner();
                 var container = WorldSpawner.lookedAtBlockEntity();
-                if (ChestIndex.supported(container) && Delivery.canUse("data") && !ChestIndex.busy && !SpawnerBatch.searching()) {
+                if (ChestIndex.supported(container) && Delivery.canUse("data") && !ChestIndex.busy) {
                     ChestIndex.load(ChestIndex.entry(container, io.github.tjhgibbs.stacksmith.core.nbt.Nbt.compound()), e -> {
                         if (Session.chestLink == null || !Session.chestLink.key().equals(e.key())) {
                             Session.chest=e.chest().copy(); Session.chestLink=e;

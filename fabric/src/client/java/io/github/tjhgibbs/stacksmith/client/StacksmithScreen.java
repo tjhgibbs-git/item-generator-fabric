@@ -36,6 +36,9 @@ public abstract class StacksmithScreen extends Screen {
         }
     }
 
+    /** Why the World tab is greyed out: it lists what is in the world you're in. */
+    static final String WORLD_NEEDED = "Join a world to list its spawners and containers.";
+
     /** The tab the key reopens. */
     static Tab lastTab = Tab.SPAWNER;
 
@@ -84,7 +87,7 @@ public abstract class StacksmithScreen extends Screen {
                     Chip tabChip = addRenderableWidget(Chip.of(t.label, w, 14, () -> {
                         if (t != current)
                             minecraft.setScreenAndShow(open(t, parent));
-                    }).selected(() -> t == current).tip(t == Tab.WORLD && !SpawnerIndex.available() ? ServerHooks.REQUIRED : t.tip).at(x, 5));
+                    }).selected(() -> t == current).tip(t == Tab.WORLD && !SpawnerIndex.available() ? WORLD_NEEDED : t.tip).at(x, 5));
                     if (t == Tab.WORLD) { worldTabs.add(tabChip); tabChip.active = SpawnerIndex.available(); }
                     x += w + 2;
                 }
@@ -119,7 +122,7 @@ public abstract class StacksmithScreen extends Screen {
         if (x < tabsRight + 4) return; // too narrow: the Chests tab's Find in world… still gets there
         Chip spawners = addRenderableWidget(Chip.of("Spawners", sw, 14, () -> {
             if (containers) minecraft.setScreenAndShow(new SpawnerWorldScreen(parent));
-        }).selected(() -> !containers).at(x, 5).tip(SpawnerIndex.available() ? "Every spawner in this world, grouped by kind" : ServerHooks.REQUIRED));
+        }).selected(() -> !containers).at(x, 5).tip(SpawnerIndex.available() ? "Every spawner in this world, grouped by kind" : WORLD_NEEDED));
         spawners.active = SpawnerIndex.available();
         addRenderableWidget(Chip.of("Containers", cw, 14, () -> {
             if (!containers) minecraft.setScreenAndShow(new ContainerWorldScreen(parent));
@@ -138,7 +141,7 @@ public abstract class StacksmithScreen extends Screen {
                 Chip tabChip = addRenderableWidget(Chip.of(tab.label, w, 22, () -> {
                     if (tab == current) onClose();
                     else minecraft.setScreenAndShow(open(tab, ((StacksmithScreen) parent).parent));
-                }).at(x, 38 + i * 27).selected(() -> tab == current).tip(tab == Tab.WORLD && !SpawnerIndex.available() ? ServerHooks.REQUIRED : tab.tip));
+                }).at(x, 38 + i * 27).selected(() -> tab == current).tip(tab == Tab.WORLD && !SpawnerIndex.available() ? WORLD_NEEDED : tab.tip));
                 if (tab == Tab.WORLD) { worldTabs.add(tabChip); tabChip.active = SpawnerIndex.available(); }
             }
             addRenderableWidget(Chip.of("Back", w, 18, this::onClose).at(x, height - 30));
@@ -314,7 +317,7 @@ public abstract class StacksmithScreen extends Screen {
         super.tick();
         worldTabs.forEach(chip -> {
             boolean available = SpawnerIndex.available();
-            if (chip.active != available) { chip.active = available; chip.tip(available ? Tab.WORLD.tip : ServerHooks.REQUIRED); }
+            if (chip.active != available) { chip.active = available; chip.tip(available ? Tab.WORLD.tip : WORLD_NEEDED); }
         });
         if (focusNext != null) {
             if (children().contains(focusNext)) {

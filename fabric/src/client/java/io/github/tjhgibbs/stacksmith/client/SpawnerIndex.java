@@ -21,8 +21,12 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.zip.*;
 
-/** An explicit session snapshot of saved spawners, overlaid with current server chunks.
- * Reads existing files only: discovery never loads or generates terrain. */
+/**
+ * The spawners the World tab lists, from the best source there is (see {@link Backend}): the
+ * saved world overlaid with current chunks when this game runs the server, the server's own
+ * snapshot through Stacksmith's hooks, or else the spawners in the chunks loaded around you,
+ * read one by one with {@code /data} queries. Discovery never loads or generates terrain.
+ */
 public final class SpawnerIndex {
     private SpawnerIndex() {}
 
@@ -48,20 +52,33 @@ public final class SpawnerIndex {
     private static final String CACHE_FILE = "stacksmith/spawner-index-v1.bin.gz";
     private static Set<String> fullChunks = Set.of();
 
-    public static boolean available() { return Minecraft.getInstance().getSingleplayerServer() != null || ServerHooks.index; }
-    static boolean current() {
-        return world != null && world == worldIdentity();
-    }
-    static Object worldIdentity() {
+    /** Built from the client's loaded chunks (no host, no hooks), for {@link #clientDimension} only. */
+    private static boolean clientBuilt;
+    private static String clientDimension;
+    /** How far around you a client-built list reaches, in blocks. */
+    static int clientReach;
+
+    /** Whether there is a world to list spawners from: always, once you're in one. */
+    public static boolean available() {
         var mc = Minecraft.getInstance();
-        return mc.getSingleplayerServer() != null ? mc.getSingleplayerServer() : ServerHooks.index ? mc.getConnection() : null;
+        return Backend.host() != null || ServerHooks.index || mc.getConnection() != null && mc.level != null;
     }
+    /** No host and no hooks: the list is what the client can read in its loaded chunks. */
+    static boolean clientBackend() { return Backend.commandsOnly(ServerHooks.index); }
+    /** The entries are this world's, from the source that is the best one now. */
+    static boolean current() {
+        return world != null && world == worldIdentity() && clientBuilt == clientBackend()
+                && (!clientBuilt || Objects.equals(clientDimension, Backend.dimension()));
+    }
+    /** The list is only the loaded chunks around you (no host, no hooks). */
+    static boolean loadedOnly() { return clientBuilt; }
+    static Object worldIdentity() { return Backend.world(); }
     private static long remoteRevision;
     static long remoteRevision() { return remoteRevision; }
     static void remoteReset() {
         remoteRevision = 0;
-        if (world != null && world != Minecraft.getInstance().getSingleplayerServer()) {
-            generation++; world = null; entries.clear(); version++; indexed = busy = false;
+        if (world != null && world != Backend.host()) {
+            generation++; world = null; entries.clear(); version++; indexed = busy = clientBuilt = false;
         }
     }
     static void remoteSnapshot(Nbt.Compound result) {
@@ -83,8 +100,9 @@ public final class SpawnerIndex {
         if (!ServerHooks.index) { status = ServerHooks.REQUIRED; done.run(); return; }
         int gen = ++generation;
         Object expected = worldIdentity();
-        if (world != expected) { entries.clear(); version++; indexed = false; }
-        world = expected; busy = true; status = "Reading server world index…";
+        // A list read from loaded chunks before the hooks answered is replaced by the server's.
+        if (world != expected || clientBuilt) { entries.clear(); version++; indexed = false; }
+        world = expected; clientBuilt = false; busy = true; status = "Reading server world index…";
         ServerHooks.request(Nbt.compound().put("op", "index"), reply -> {
             if (gen != generation || expected != worldIdentity()) return;
             busy = false;
@@ -106,7 +124,7 @@ public final class SpawnerIndex {
     }
 
     public static void cancel() {
-        if (Minecraft.getInstance().getSingleplayerServer() == null && busy) ServerHooks.cancel();
+        if (Backend.host() == null && busy && !clientBuilt) ServerHooks.cancel();
         generation++;
         busy = false;
         status = indexed ? "Update cancelled · previous saved results retained" : "Discovery cancelled. No spawners changed.";
@@ -195,15 +213,20 @@ public final class SpawnerIndex {
 
     private static void refresh(boolean forceUpdate, Runnable done) {
         Minecraft mc = Minecraft.getInstance();
-        var server = mc.getSingleplayerServer();
-        if (server == null) { if (!busy) remoteRefresh(forceUpdate, done); return; }
+        var server = Backend.host();
+        if (server == null) {
+            if (busy) return;
+            if (ServerHooks.index) remoteRefresh(forceUpdate, done); else clientRefresh(forceUpdate, done);
+            return;
+        }
         if (busy) return;
         if (mc.level == null) {
             status = "Join a world before discovering spawners.";
             done.run();
             return;
         }
-        boolean sameWorld = world == server;
+        boolean sameWorld = world == server && !clientBuilt;
+        clientBuilt = false;
         if (!sameWorld) {
             generation++;
             entries.clear();
@@ -320,6 +343,63 @@ public final class SpawnerIndex {
                 }
             });
         }));
+    }
+
+    /**
+     * Reads every spawner in the chunks loaded around you, nearest first, one {@code /data}
+     * query at a time. The list covers your dimension only and is replaced when you travel.
+     */
+    private static void clientRefresh(boolean forceUpdate, Runnable done) {
+        Minecraft mc = Minecraft.getInstance();
+        if (!forceUpdate && current() && indexed) { done.run(); return; }
+        if (mc.level == null || mc.player == null || mc.getConnection() == null) { status = "Join a world before discovering spawners."; done.run(); return; }
+        if (!Delivery.canUse("data")) { status = "Reading spawners needs operator permission (/data)."; done.run(); return; }
+        int gen = ++generation;
+        Object expected = mc.getConnection();
+        String dim = Backend.dimension();
+        if (!current()) { entries.clear(); version++; indexed = false; savedAt = 0; }
+        world = expected; clientBuilt = true; clientDimension = dim; busy = true; skipped = 0;
+        BlockPos centre = mc.player.blockPosition();
+        int reach = Backend.loadedReach();
+        int chunks = reach / 16 + 1;
+        List<BlockPos> spots = new ArrayList<>();
+        for (int cx = (centre.getX() >> 4) - chunks; cx <= (centre.getX() >> 4) + chunks; cx++)
+            for (int cz = (centre.getZ() >> 4) - chunks; cz <= (centre.getZ() >> 4) + chunks; cz++)
+                if (mc.level.getChunkSource().getChunk(cx, cz, net.minecraft.world.level.chunk.status.ChunkStatus.FULL, false)
+                        instanceof net.minecraft.world.level.chunk.LevelChunk chunk)
+                    for (var be : chunk.getBlockEntities().values())
+                        if (be instanceof SpawnerBlockEntity) spots.add(be.getBlockPos().immutable());
+        spots.sort(Comparator.comparingDouble(p -> p.distSqr(centre)));
+        Map<String, Entry> found = new LinkedHashMap<>();
+        int[] read = {0}, unread = {0};
+        status = "Reading loaded spawners… 0/" + spots.size();
+        Runnable finish = () -> {
+            if (gen != generation) return;
+            busy = false;
+            if (expected != mc.getConnection() || !dim.equals(Backend.dimension())) {
+                status = "World changed. Rescan.";
+                done.run();
+                return;
+            }
+            entries.clear(); entries.putAll(found); version++;
+            indexed = true; savedAt = System.currentTimeMillis(); skipped = unread[0]; clientReach = reach;
+            status = entries.size() + " spawners · loaded chunks only, within about " + reach + " blocks of where you stood"
+                    + (unread[0] > 0 ? " · " + unread[0] + " couldn't be read" : "");
+            done.run();
+        };
+        if (spots.isEmpty()) { finish.run(); return; }
+        for (BlockPos pos : spots) {
+            BlockReads.read(pos, () -> gen == generation && dim.equals(Backend.dimension()), data -> {
+                if (gen != generation) return;
+                if (data == null) unread[0]++;
+                else {
+                    try { Entry e = entry(dim, pos, data); found.put(e.key(), e); }
+                    catch (RuntimeException ex) { unread[0]++; }
+                }
+                status = "Reading loaded spawners… " + (++read[0]) + "/" + spots.size();
+                if (read[0] == spots.size()) finish.run();
+            });
+        }
     }
 
     private record Region(Stamp stamp, Map<String, Entry> entries, Set<String> full, int skipped) {}
